@@ -1,10 +1,6 @@
 # Periodical Home Assistant Integration
 
-Custom Home Assistant integration for connecting to a Periodical API server and exposing shift schedule, working status, absence, vacation and monthly pay data as Home Assistant entities.
-
-Upstream Periodical application:
-
-https://github.com/KalleL94/Periodical
+Custom Home Assistant integration for connecting to a Periodical and exposing shift schedule, working status, absence, vacation and monthly pay data as Home Assistant entities.
 
 ## Features
 
