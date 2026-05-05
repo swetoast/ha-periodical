@@ -263,16 +263,6 @@ Connection errors and timeouts should retry until attempts are exhausted.
 
 If setup fails with invalid authentication, verify that the bearer token is correct and that the Periodical API server accepts it.
 
-### Cannot connect
-
-Check:
-
-- API base URL
-- DNS/network access from Home Assistant
-- reverse proxy configuration
-- TLS certificate validity
-- Periodical backend status
-
 ### Entities unavailable
 
 Check Home Assistant logs for errors from:
@@ -285,15 +275,6 @@ custom_components.periodical.coordinator
 ### Wrong or missing schedule data
 
 Verify the API response directly against the Periodical backend endpoint for the affected user and date.
-
-## Development Notes
-
-- Domain: `periodical`
-- IoT class: `cloud_polling`
-- Config flow: enabled
-- No external Python package requirements are currently declared
-- Integration depends on Home Assistant's shared aiohttp client session
-- Data refresh is coordinated through `PeriodicalCoordinator`
 
 ## License
 
