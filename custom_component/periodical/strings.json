@@ -133,9 +133,6 @@
       "absent_today": {
         "name": "Absent Today"
       },
-      "api_connected": {
-        "name": "API Connected"
-      },
       "api_problem": {
         "name": "API Problem"
       }
