@@ -13,7 +13,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -41,19 +41,23 @@ class PeriodicalBinarySensorDescription(BinarySensorEntityDescription):
 
 def _is_working_today(data: dict[str, Any]) -> bool | None:
     status_data = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY)
+
     if status_data is None:
         return None
 
     status_str = status_data.get("status") if isinstance(status_data, dict) else None
+
     if isinstance(status_str, str):
         return status_str.lower() == "working"
 
     shift = status_data.get("shift") if isinstance(status_data, dict) else None
+
     return bool(isinstance(shift, dict) and shift.get("start_time"))
 
 
 def _working_today_attrs(data: dict[str, Any]) -> dict[str, Any]:
     st = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY) or {}
+
     attrs: dict[str, Any] = {
         "status": st.get("status"),
         "rotation_week": st.get("rotation_week"),
@@ -61,6 +65,7 @@ def _working_today_attrs(data: dict[str, Any]) -> dict[str, Any]:
     }
 
     shift = st.get("shift")
+
     if isinstance(shift, dict):
         attrs["shift_code"] = shift.get("code")
         attrs["shift_label"] = shift.get("label")
@@ -68,7 +73,7 @@ def _working_today_attrs(data: dict[str, Any]) -> dict[str, Any]:
         attrs["start_time"] = shift.get("start_time")
         attrs["end_time"] = shift.get("end_time")
 
-    return {k: v for k, v in attrs.items() if v is not None}
+    return {key: value for key, value in attrs.items() if value is not None}
 
 
 def _has_absence_today(data: dict[str, Any]) -> bool | None:
@@ -85,12 +90,12 @@ def _has_absence_today(data: dict[str, Any]) -> bool | None:
     elif isinstance(absences, dict):
         items = absences.get("absences") or absences.get("items") or []
 
-    for ab in items:
-        if not isinstance(ab, dict):
+    for absence in items:
+        if not isinstance(absence, dict):
             continue
 
-        start = ab.get("start_date") or ab.get("from") or ab.get("date") or ""
-        end = ab.get("end_date") or ab.get("to") or start
+        start = absence.get("start_date") or absence.get("from") or absence.get("date") or ""
+        end = absence.get("end_date") or absence.get("to") or start
 
         if start <= today_str <= end:
             return True
@@ -178,6 +183,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
         name="API Problem",
         icon="mdi:cloud-alert",
         device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
         is_on_fn=_api_problem,
         attr_fn=_api_health_attrs,
     ),
