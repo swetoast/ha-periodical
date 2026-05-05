@@ -67,7 +67,7 @@ Settings → Devices & services → Add integration → Periodical
 Required fields:
 
 - `API Key` - your Periodical bearer token
-- `API Base URL` - default: `https://periodical.kakanweb.com/api/v1`
+- `API Base URL` - default: `https://periodical.com/api/v1`
 
 The config flow validates the API key by calling `/me`.
 
