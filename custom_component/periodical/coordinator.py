@@ -11,12 +11,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import PeriodicalApi, PeriodicalApiError, PeriodicalAuthError
+from .api import PeriodicalApi, PeriodicalAuthError
 from .const import (
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_USER_ID,
     DATA_ABSENCES,
+    DATA_API_HEALTH,
     DATA_ME,
     DATA_NEXT_SHIFT,
     DATA_NEXT_SHIFT_TOMORROW,
@@ -53,68 +54,93 @@ class PeriodicalCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             session=session,
         )
         self.user_id: int = entry.data[CONF_USER_ID]
+        self._last_good_data: dict[str, Any] = {}
+        self._last_update_success = False
+        self._last_failed_endpoints: list[str] = []
+        self._last_error: str | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch all data sources concurrently."""
+        """Fetch all data sources concurrently and keep last good data on partial failures."""
         uid = self.user_id
-        today    = _date.today().isoformat()
+        today = _date.today().isoformat()
         tomorrow = (_date.today() + timedelta(days=1)).isoformat()
 
-        try:
-            (
-                me,
-                status,
-                schedule_today,
-                schedule_week,
-                schedule_month,
-                schedule_year,
-                next_shift,
-                next_shift_tomorrow,
-                vacation_balance,
-                pay_month,
-                absences,
-            ) = await asyncio.gather(
-                self.api.get_me(),
-                self.api.get_user_status(uid),
-                self.api.get_schedule_today(uid),
-                # Current ISO week — pass today so the API returns the week
-                # that contains today's date.
-                self.api.get_schedule_week(uid, today),
-                self.api.get_schedule_month(uid),
-                # Full year schedule — used for yearly shift/hour totals.
-                self.api.get_schedule_year(uid),
-                # No date param → next upcoming shift from right now
-                # (today's if not yet started, otherwise tomorrow's).
-                self.api.get_next_shift(uid),
-                # Pinned to tomorrow → always tomorrow's calendar shift.
-                self.api.get_next_shift(uid, date=tomorrow, time="00:00"),
-                self.api.get_vacation_balance(uid),
-                self.api.get_pay_month(uid),
-                self.api.get_absences(uid),
-                return_exceptions=True,
-            )
-        except PeriodicalAuthError as err:
-            raise UpdateFailed(f"Authentication error: {err}") from err
-        except PeriodicalApiError as err:
-            raise UpdateFailed(f"API error: {err}") from err
+        keys = (
+            DATA_ME,
+            DATA_STATUS,
+            DATA_SCHEDULE_TODAY,
+            DATA_SCHEDULE_WEEK,
+            DATA_SCHEDULE_MONTH,
+            DATA_SCHEDULE_YEAR,
+            DATA_NEXT_SHIFT,
+            DATA_NEXT_SHIFT_TOMORROW,
+            DATA_VACATION_BALANCE,
+            DATA_PAY_MONTH,
+            DATA_ABSENCES,
+        )
 
-        def _unwrap(result: Any, key: str) -> Any:
-            """Return result or log and return None on individual fetch failure."""
+        results = await asyncio.gather(
+            self.api.get_me(),
+            self.api.get_user_status(uid),
+            self.api.get_schedule_today(uid),
+            self.api.get_schedule_week(uid, today),
+            self.api.get_schedule_month(uid),
+            self.api.get_schedule_year(uid),
+            self.api.get_next_shift(uid),
+            self.api.get_next_shift(uid, date=tomorrow, time="00:00"),
+            self.api.get_vacation_balance(uid),
+            self.api.get_pay_month(uid),
+            self.api.get_absences(uid),
+            return_exceptions=True,
+        )
+
+        data: dict[str, Any] = {}
+        failed_endpoints: list[str] = []
+        errors: list[str] = []
+        success_count = 0
+        stale_keys: list[str] = []
+
+        for key, result in zip(keys, results, strict=True):
             if isinstance(result, Exception):
-                _LOGGER.warning("Failed to fetch %s: %s", key, result)
-                return None
-            return result
+                failed_endpoints.append(key)
+                errors.append(f"{key}: {result}")
 
-        return {
-            DATA_ME:                  _unwrap(me,                   DATA_ME),
-            DATA_STATUS:              _unwrap(status,               DATA_STATUS),
-            DATA_SCHEDULE_TODAY:      _unwrap(schedule_today,       DATA_SCHEDULE_TODAY),
-            DATA_SCHEDULE_WEEK:       _unwrap(schedule_week,        DATA_SCHEDULE_WEEK),
-            DATA_SCHEDULE_MONTH:      _unwrap(schedule_month,       DATA_SCHEDULE_MONTH),
-            DATA_SCHEDULE_YEAR:       _unwrap(schedule_year,        DATA_SCHEDULE_YEAR),
-            DATA_NEXT_SHIFT:          _unwrap(next_shift,           DATA_NEXT_SHIFT),
-            DATA_NEXT_SHIFT_TOMORROW: _unwrap(next_shift_tomorrow,  DATA_NEXT_SHIFT_TOMORROW),
-            DATA_VACATION_BALANCE:    _unwrap(vacation_balance,     DATA_VACATION_BALANCE),
-            DATA_PAY_MONTH:           _unwrap(pay_month,            DATA_PAY_MONTH),
-            DATA_ABSENCES:            _unwrap(absences,             DATA_ABSENCES),
+                if isinstance(result, PeriodicalAuthError) and key == DATA_ME and not self._last_good_data:
+                    raise UpdateFailed(f"Authentication error: {result}") from result
+
+                if key in self._last_good_data:
+                    data[key] = self._last_good_data[key]
+                    stale_keys.append(key)
+                else:
+                    data[key] = None
+
+                _LOGGER.debug("Failed to fetch %s, using stale data if available: %s", key, result)
+                continue
+
+            data[key] = result
+            if result is not None:
+                self._last_good_data[key] = result
+                success_count += 1
+
+        if success_count == 0 and not self._last_good_data:
+            err = errors[0] if errors else "all Periodical API requests failed"
+            raise UpdateFailed(err)
+
+        self._last_update_success = not failed_endpoints
+        self._last_failed_endpoints = failed_endpoints
+        self._last_error = errors[0] if errors else None
+
+        data[DATA_API_HEALTH] = {
+            "connected": success_count > 0 and not self.api.diagnostics.get("circuit_open", False),
+            "partial_failure": bool(failed_endpoints) and success_count > 0,
+            "using_stale_data": bool(stale_keys),
+            "failed_endpoints": failed_endpoints,
+            "stale_keys": stale_keys,
+            "success_count": success_count,
+            "failure_count": len(failed_endpoints),
+            "last_update_success": self._last_update_success,
+            "last_error": self._last_error,
+            "api": self.api.diagnostics,
         }
+
+        return data
