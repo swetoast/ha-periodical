@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+import socket
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -12,8 +15,12 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
 DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_CONNECT_RETRY_ATTEMPTS = 5
+DEFAULT_DNS_RETRY_ATTEMPTS = 6
 DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
-MAX_RETRY_DELAY_SECONDS = 60
+DEFAULT_DNS_BACKOFF_SECONDS = 5.0
+MAX_RETRY_DELAY_SECONDS = 60.0
+MAX_ERROR_BODY_LENGTH = 500
 
 HTTP_AUTH_STATUSES = frozenset({401, 403})
 
@@ -41,14 +48,10 @@ HTTP_FAIL_STATUSES = frozenset(
     if status not in HTTP_AUTH_STATUSES and status not in HTTP_RETRY_STATUSES
 )
 
-HTTP_SUCCESS_RANGE = range(200, 300)
-HTTP_INFORMATIONAL_RANGE = range(100, 200)
-HTTP_REDIRECT_RANGE = range(300, 400)
-
 HTTP_STATUS_POLICY: dict[int, str] = {
-    **{status: "ignore_informational" for status in HTTP_INFORMATIONAL_RANGE},
-    **{status: "success" for status in HTTP_SUCCESS_RANGE},
-    **{status: "fail_redirect" for status in HTTP_REDIRECT_RANGE},
+    **{status: "ignore_informational" for status in range(100, 200)},
+    **{status: "success" for status in range(200, 300)},
+    **{status: "fail_redirect" for status in range(300, 400)},
     **{status: "fail" for status in HTTP_FAIL_STATUSES},
     **{status: "auth_fail" for status in HTTP_AUTH_STATUSES},
     **{status: "retry" for status in HTTP_RETRY_STATUSES},
@@ -70,13 +73,19 @@ class PeriodicalApi:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._session = session
-        self._timeout = aiohttp.ClientTimeout(total=DEFAULT_REQUEST_TIMEOUT_SECONDS)
+        self._timeout = aiohttp.ClientTimeout(
+            total=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            connect=10,
+            sock_connect=10,
+            sock_read=20,
+        )
+        self._network_backoff_until = 0.0
 
     @property
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self._api_key}",
-            "Accept": "application/json",
+            "Accept": "application/json, text/plain, */*",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -101,6 +110,15 @@ class PeriodicalApi:
         return "fail"
 
     @staticmethod
+    def _trim_text(text: str | None) -> str:
+        if not text:
+            return ""
+        text = text.strip()
+        if len(text) <= MAX_ERROR_BODY_LENGTH:
+            return text
+        return f"{text[:MAX_ERROR_BODY_LENGTH]}..."
+
+    @staticmethod
     def _retry_after_seconds(value: str | None) -> float | None:
         if not value:
             return None
@@ -116,7 +134,9 @@ class PeriodicalApi:
             retry_at = parsedate_to_datetime(value)
             if retry_at is None:
                 return None
-            delay = retry_at.timestamp() - asyncio.get_running_loop().time()
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            delay = retry_at.timestamp() - datetime.now(timezone.utc).timestamp()
             if delay > 0:
                 return min(delay, MAX_RETRY_DELAY_SECONDS)
         except (TypeError, ValueError, OverflowError):
@@ -127,24 +147,98 @@ class PeriodicalApi:
     @staticmethod
     async def _response_text(resp: aiohttp.ClientResponse) -> str:
         try:
-            text = await resp.text()
+            return PeriodicalApi._trim_text(await resp.text())
         except Exception:  # noqa: BLE001
             return ""
-        return text.strip()
 
-    def _retry_delay(self, attempt: int, retry_after: str | None = None) -> float:
+    @staticmethod
+    def _is_dns_error(err: BaseException) -> bool:
+        dns_error_cls = getattr(aiohttp, "ClientConnectorDNSError", None)
+
+        if dns_error_cls is not None and isinstance(err, dns_error_cls):
+            return True
+
+        if isinstance(err, aiohttp.ClientConnectorError):
+            os_error = getattr(err, "os_error", None)
+
+            if isinstance(os_error, socket.gaierror):
+                return True
+
+            msg = str(err).lower()
+            return any(
+                marker in msg
+                for marker in (
+                    "dns",
+                    "name or service not known",
+                    "temporary failure in name resolution",
+                    "server returned answer with no data",
+                    "no address associated with hostname",
+                    "nodename nor servname provided",
+                    "failed to resolve",
+                )
+            )
+
+        return False
+
+    @staticmethod
+    def _is_connect_error(err: BaseException) -> bool:
+        return isinstance(
+            err,
+            (
+                aiohttp.ClientConnectorError,
+                aiohttp.ServerDisconnectedError,
+                aiohttp.ClientOSError,
+            ),
+        )
+
+    def _max_attempts_for_error(self, err: BaseException) -> int:
+        if self._is_dns_error(err):
+            return DEFAULT_DNS_RETRY_ATTEMPTS
+        if self._is_connect_error(err):
+            return DEFAULT_CONNECT_RETRY_ATTEMPTS
+        return DEFAULT_RETRY_ATTEMPTS
+
+    def _retry_delay(
+        self,
+        attempt: int,
+        retry_after: str | None = None,
+        dns_error: bool = False,
+    ) -> float:
         retry_after_delay = self._retry_after_seconds(retry_after)
         if retry_after_delay is not None:
             return retry_after_delay
 
-        delay = DEFAULT_RETRY_BACKOFF_SECONDS * (2 ** max(attempt - 1, 0))
-        return min(delay, MAX_RETRY_DELAY_SECONDS)
+        base = DEFAULT_DNS_BACKOFF_SECONDS if dns_error else DEFAULT_RETRY_BACKOFF_SECONDS
+        delay = base * (2 ** max(attempt - 1, 0))
+        jitter = random.uniform(0.0, min(1.0, delay * 0.25))
+        return min(delay + jitter, MAX_RETRY_DELAY_SECONDS)
+
+    async def _wait_for_network_backoff(self, path: str) -> None:
+        wait_time = self._network_backoff_until - asyncio.get_running_loop().time()
+        if wait_time > 0:
+            _LOGGER.debug(
+                "Periodical API network backoff active for %s, waiting %.1fs",
+                path,
+                wait_time,
+            )
+            await asyncio.sleep(wait_time)
+
+    def _set_network_backoff(self, delay: float) -> None:
+        loop = asyncio.get_running_loop()
+        self._network_backoff_until = max(
+            self._network_backoff_until,
+            loop.time() + min(delay, MAX_RETRY_DELAY_SECONDS),
+        )
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         url = f"{self._base_url}{path}"
+        attempt = 0
         last_error: Exception | None = None
 
-        for attempt in range(1, DEFAULT_RETRY_ATTEMPTS + 1):
+        while attempt < DEFAULT_DNS_RETRY_ATTEMPTS:
+            attempt += 1
+            await self._wait_for_network_backoff(path)
+
             try:
                 async with self._session.get(
                     url,
@@ -156,30 +250,33 @@ class PeriodicalApi:
                     policy = self._status_policy(status)
 
                     if policy == "success":
+                        if status == 204:
+                            return {}
+
                         try:
                             return await resp.json(content_type=None)
                         except Exception as err:  # noqa: BLE001
                             text = await self._response_text(resp)
+                            content_type = resp.headers.get("Content-Type", "unknown")
                             raise PeriodicalApiError(
-                                f"Invalid JSON response from {path}: HTTP {status}: {text}"
+                                f"GET {path} failed: invalid JSON from HTTP {status}, "
+                                f"content-type={content_type}, body={text}"
                             ) from err
 
                     text = await self._response_text(resp)
 
                     if policy == "auth_fail":
                         if status == 401:
-                            raise PeriodicalAuthError(f"HTTP 401 Unauthorized: Invalid API key: {text}")
-                        raise PeriodicalAuthError(f"HTTP 403 Forbidden: Access denied: {text}")
+                            raise PeriodicalAuthError(
+                                f"GET {path} failed: HTTP 401 Unauthorized"
+                            )
+                        raise PeriodicalAuthError(f"GET {path} failed: HTTP 403 Forbidden")
 
                     if policy == "retry":
-                        last_error = PeriodicalApiError(
-                            f"HTTP {status} retryable error on {path}: {text}"
-                        )
-
                         if attempt < DEFAULT_RETRY_ATTEMPTS:
                             delay = self._retry_delay(attempt, resp.headers.get("Retry-After"))
-                            _LOGGER.warning(
-                                "Periodical API retry %s/%s for %s after HTTP %s, waiting %.1fs",
+                            _LOGGER.debug(
+                                "Periodical API HTTP retry %s/%s for %s after HTTP %s, waiting %.1fs",
                                 attempt,
                                 DEFAULT_RETRY_ATTEMPTS,
                                 path,
@@ -190,25 +287,27 @@ class PeriodicalApi:
                             continue
 
                         raise PeriodicalApiError(
-                            f"HTTP {status} retryable error on {path}, retries exhausted: {text}"
+                            f"GET {path} failed: HTTP {status}, retries exhausted: {text}"
                         )
 
                     if policy == "fail_redirect":
                         location = resp.headers.get("Location")
                         raise PeriodicalApiError(
-                            f"HTTP {status} redirect returned for {path}; Location={location}; body={text}"
+                            f"GET {path} failed: HTTP {status} redirect, Location={location}"
                         )
 
-                    raise PeriodicalApiError(f"HTTP {status} non-retryable error on {path}: {text}")
+                    raise PeriodicalApiError(
+                        f"GET {path} failed: HTTP {status} non-retryable error: {text}"
+                    )
 
             except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as err:
                 last_error = PeriodicalApiError(
-                    f"Timeout after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s on {path}"
+                    f"GET {path} timed out after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s"
                 )
 
                 if attempt < DEFAULT_RETRY_ATTEMPTS:
                     delay = self._retry_delay(attempt)
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "Periodical API timeout retry %s/%s for %s, waiting %.1fs",
                         attempt,
                         DEFAULT_RETRY_ATTEMPTS,
@@ -219,18 +318,27 @@ class PeriodicalApi:
                     continue
 
                 raise PeriodicalApiError(
-                    f"Timeout after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s on {path}, retries exhausted"
+                    f"GET {path} timed out after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s, "
+                    f"retries exhausted after {DEFAULT_RETRY_ATTEMPTS} attempts"
                 ) from err
 
             except aiohttp.ClientError as err:
-                last_error = PeriodicalApiError(f"Connection error on {path}: {err}")
+                dns_error = self._is_dns_error(err)
+                max_attempts = self._max_attempts_for_error(err)
+                error_type = "DNS" if dns_error else "connection"
+                last_error = PeriodicalApiError(f"GET {path} {error_type} error: {err}")
 
-                if attempt < DEFAULT_RETRY_ATTEMPTS:
-                    delay = self._retry_delay(attempt)
-                    _LOGGER.warning(
-                        "Periodical API connection retry %s/%s for %s, waiting %.1fs: %s",
+                if attempt < max_attempts:
+                    delay = self._retry_delay(attempt, dns_error=dns_error)
+
+                    if dns_error:
+                        self._set_network_backoff(delay)
+
+                    _LOGGER.debug(
+                        "Periodical API %s retry %s/%s for %s, waiting %.1fs: %s",
+                        error_type,
                         attempt,
-                        DEFAULT_RETRY_ATTEMPTS,
+                        max_attempts,
                         path,
                         delay,
                         err,
@@ -239,13 +347,14 @@ class PeriodicalApi:
                     continue
 
                 raise PeriodicalApiError(
-                    f"Connection error on {path}, retries exhausted: {err}"
+                    f"GET {path} {error_type} error, retries exhausted after "
+                    f"{max_attempts} attempts: {err}"
                 ) from err
 
         if last_error is not None:
             raise last_error
 
-        raise PeriodicalApiError(f"Unknown API error on {path}")
+        raise PeriodicalApiError(f"GET {path} failed: unknown API error")
 
     async def get_me(self) -> dict[str, Any]:
         """GET /me — basic info about the authenticated user."""
