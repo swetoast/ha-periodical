@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Periodical",
+        "description": "Enter your Periodical API key. You can find it in the Periodical web portal under Settings → API.",
+        "data": {
+          "api_key": "API Key",
+          "base_url": "API Base URL"
+        },
+        "data_description": {
+          "api_key": "Your personal API key (Bearer token)",
+          "base_url": "Leave as default unless you self-host Periodical"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid API key — authentication failed.",
+      "cannot_connect": "Could not connect to the Periodical API. Check your network and Base URL.",
+      "no_user_id": "API key authenticated but no user ID was returned. Contact support.",
+      "unknown": "An unexpected error occurred. Check Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "This Periodical account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "shift_start_today":       { "name": "Shift Start Today" },
+      "shift_end_today":         { "name": "Shift End Today" },
+      "coworkers_today":         { "name": "Co-workers Today" },
+      "status_today":            { "name": "Status Today" },
+      "ob_today":                { "name": "OB Supplement Today" },
+      "rotation_week":           { "name": "Rotation Week" },
+      "shifts_this_week":        { "name": "Shifts This Week" },
+      "hours_this_week":         { "name": "Hours This Week" },
+      "working_days_month":      { "name": "Working Days This Month" },
+      "shifts_this_year":        { "name": "Shifts This Year" },
+      "shifts_remaining_year":   { "name": "Shifts Remaining This Year" },
+      "hours_this_year":         { "name": "Hours This Year" },
+      "next_shift_date":         { "name": "Next Shift Date" },
+      "next_shift_start":        { "name": "Next Shift Start" },
+      "next_shift_end":          { "name": "Next Shift End" },
+      "tomorrow_shift_date":     { "name": "Tomorrow Shift Date" },
+      "tomorrow_shift_start":    { "name": "Tomorrow Shift Start" },
+      "tomorrow_shift_end":      { "name": "Tomorrow Shift End" },
+      "vacation_remaining":      { "name": "Vacation Days Remaining" },
+      "vacation_used":           { "name": "Vacation Days Used" },
+      "vacation_total":          { "name": "Vacation Days Total" },
+      "pay_month_gross":         { "name": "Monthly Pay (Gross)" },
+      "pay_month_netto":         { "name": "Monthly Pay (Netto)" },
+      "pay_month_hours":         { "name": "Monthly Hours Worked" },
+      "pay_month_shifts":        { "name": "Monthly Shifts" },
+      "pay_oncall_month":        { "name": "Monthly On-call Pay" },
+      "pay_oncall_hours_month":  { "name": "Monthly On-call Hours" },
+      "pay_overtime_month":      { "name": "Monthly Overtime Pay" },
+      "pay_sick_days_month":     { "name": "Monthly Sick Days" },
+      "pay_sick_hours_month":    { "name": "Monthly Sick Hours" },
+      "pay_vab_days_month":      { "name": "Monthly VAB Days" },
+      "pay_leave_days_month":    { "name": "Monthly Leave Days" },
+      "absences_count":          { "name": "Absences This Year" }
+    },
+    "binary_sensor": {
+      "working_today": { "name": "Working Today" },
+      "absent_today":  { "name": "Absent Today" }
+    }
+  }
+}

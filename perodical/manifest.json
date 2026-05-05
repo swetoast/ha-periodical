@@ -1,0 +1,12 @@
+{
+  "domain": "periodical",
+  "name": "Periodical",
+  "version": "1.0.0",
+  "documentation": "https://github.com/swetoast/ha-periodical",
+  "issue_tracker": "https://github.com/swetoast/ha-periodical/issues",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "cloud_polling",
+  "config_flow": true
+}
