@@ -297,7 +297,7 @@ Verify the API response directly against the Periodical backend endpoint for the
 
 ## License
 
-This Home Assistant custom component should follow the license chosen by its repository owner.
+MIT License
 
 The upstream Periodical application is maintained separately at:
 
