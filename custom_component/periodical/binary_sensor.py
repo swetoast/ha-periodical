@@ -21,6 +21,7 @@ from .const import (
     CONF_USER_ID,
     CONF_USER_NAME,
     DATA_ABSENCES,
+    DATA_API_HEALTH,
     DATA_SCHEDULE_TODAY,
     DATA_STATUS,
     DOMAIN,
@@ -38,32 +39,20 @@ class PeriodicalBinarySensorDescription(BinarySensorEntityDescription):
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
-def _is_working_today(data: dict) -> bool | None:
-    """
-    Return True if the user has a shift today.
-
-    Real API response has:  {"status": "working", "shift": {...}, ...}
-    The previous code looked for boolean flags like "working", "on_duty",
-    "has_shift" — none of which exist. The real field is status == "working".
-    """
-    status_data = data.get(DATA_STATUS)
-    if status_data is None:
-        # Fall back to schedule/today if status hasn't loaded yet
-        status_data = data.get(DATA_SCHEDULE_TODAY)
+def _is_working_today(data: dict[str, Any]) -> bool | None:
+    status_data = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY)
     if status_data is None:
         return None
 
-    status_str = status_data.get("status")
+    status_str = status_data.get("status") if isinstance(status_data, dict) else None
     if isinstance(status_str, str):
-        # "working" → True; "off", "sick", "vacation", etc → False
         return status_str.lower() == "working"
 
-    # Final fallback: any shift data present means working
-    shift = status_data.get("shift")
+    shift = status_data.get("shift") if isinstance(status_data, dict) else None
     return bool(isinstance(shift, dict) and shift.get("start_time"))
 
 
-def _working_today_attrs(data: dict) -> dict[str, Any]:
+def _working_today_attrs(data: dict[str, Any]) -> dict[str, Any]:
     st = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY) or {}
     attrs: dict[str, Any] = {
         "status": st.get("status"),
@@ -80,13 +69,13 @@ def _working_today_attrs(data: dict) -> dict[str, Any]:
     return {k: v for k, v in attrs.items() if v is not None}
 
 
-def _has_absence_today(data: dict) -> bool | None:
-    """Return True if the user has a recorded absence today."""
+def _has_absence_today(data: dict[str, Any]) -> bool | None:
     today_str = date.today().isoformat()
     absences = data.get(DATA_ABSENCES)
     if absences is None:
         return None
-    items: list = []
+
+    items: list[Any] = []
     if isinstance(absences, list):
         items = absences
     elif isinstance(absences, dict):
@@ -99,7 +88,33 @@ def _has_absence_today(data: dict) -> bool | None:
         end = ab.get("end_date") or ab.get("to") or start
         if start <= today_str <= end:
             return True
+
     return False
+
+
+def _api_connected(data: dict[str, Any]) -> bool | None:
+    health = data.get(DATA_API_HEALTH)
+    if not isinstance(health, dict):
+        return None
+    return bool(health.get("connected"))
+
+
+def _api_problem(data: dict[str, Any]) -> bool | None:
+    health = data.get(DATA_API_HEALTH)
+    if not isinstance(health, dict):
+        return None
+    api = health.get("api") if isinstance(health.get("api"), dict) else {}
+    return bool(
+        health.get("partial_failure")
+        or health.get("using_stale_data")
+        or health.get("failed_endpoints")
+        or api.get("circuit_open")
+    )
+
+
+def _api_health_attrs(data: dict[str, Any]) -> dict[str, Any]:
+    health = data.get(DATA_API_HEALTH)
+    return health if isinstance(health, dict) else {}
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
@@ -120,6 +135,24 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         is_on_fn=_has_absence_today,
         attr_fn=None,
+    ),
+    PeriodicalBinarySensorDescription(
+        key="api_connected",
+        translation_key="api_connected",
+        name="API Connected",
+        icon="mdi:cloud-check",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        is_on_fn=_api_connected,
+        attr_fn=_api_health_attrs,
+    ),
+    PeriodicalBinarySensorDescription(
+        key="api_problem",
+        translation_key="api_problem",
+        name="API Problem",
+        icon="mdi:cloud-alert",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on_fn=_api_problem,
+        attr_fn=_api_health_attrs,
     ),
 )
 
@@ -168,6 +201,7 @@ class PeriodicalBinarySensor(CoordinatorEntity[PeriodicalCoordinator], BinarySen
         try:
             return self.entity_description.is_on_fn(self.coordinator.data)
         except Exception:  # noqa: BLE001
+            _LOGGER.debug("Failed to calculate binary sensor %s", self.entity_description.key, exc_info=True)
             return None
 
     @property
@@ -177,4 +211,5 @@ class PeriodicalBinarySensor(CoordinatorEntity[PeriodicalCoordinator], BinarySen
         try:
             return self.entity_description.attr_fn(self.coordinator.data) or {}
         except Exception:  # noqa: BLE001
+            _LOGGER.debug("Failed to calculate attributes for %s", self.entity_description.key, exc_info=True)
             return {}
