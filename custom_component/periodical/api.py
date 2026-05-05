@@ -21,33 +21,18 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
 DEFAULT_DNS_BACKOFF_SECONDS = 5.0
 MAX_RETRY_DELAY_SECONDS = 60.0
 MAX_ERROR_BODY_LENGTH = 500
+MAX_CONCURRENT_REQUESTS = 3
+CIRCUIT_FAILURE_WINDOW_SECONDS = 60.0
+CIRCUIT_FAILURE_THRESHOLD = 5
+CIRCUIT_OPEN_SECONDS = 300.0
 
 HTTP_AUTH_STATUSES = frozenset({401, 403})
-
-HTTP_RETRY_STATUSES = frozenset(
-    {
-        408,
-        421,
-        425,
-        429,
-        500,
-        502,
-        503,
-        504,
-        520,
-        521,
-        522,
-        523,
-        524,
-    }
-)
-
+HTTP_RETRY_STATUSES = frozenset({408, 421, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524})
 HTTP_FAIL_STATUSES = frozenset(
     status
     for status in range(400, 600)
     if status not in HTTP_AUTH_STATUSES and status not in HTTP_RETRY_STATUSES
 )
-
 HTTP_STATUS_POLICY: dict[int, str] = {
     **{status: "ignore_informational" for status in range(100, 200)},
     **{status: "success" for status in range(200, 300)},
@@ -79,7 +64,45 @@ class PeriodicalApi:
             sock_connect=10,
             sock_read=20,
         )
+        self._request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
         self._network_backoff_until = 0.0
+        self._circuit_open_until = 0.0
+        self._network_failures: list[float] = []
+        self._last_success_utc: str | None = None
+        self._last_error_utc: str | None = None
+        self._last_error: str | None = None
+        self._last_error_path: str | None = None
+        self._last_http_status: int | None = None
+        self._total_requests = 0
+        self._total_failures = 0
+        self._total_retries = 0
+        self._dns_failures = 0
+        self._timeout_failures = 0
+        self._connection_failures = 0
+
+    @property
+    def diagnostics(self) -> dict[str, Any]:
+        now = asyncio.get_running_loop().time()
+        circuit_open_seconds = max(0.0, self._circuit_open_until - now)
+        network_backoff_seconds = max(0.0, self._network_backoff_until - now)
+        return {
+            "base_url": self._base_url,
+            "connected": self._last_success_utc is not None and circuit_open_seconds <= 0,
+            "circuit_open": circuit_open_seconds > 0,
+            "circuit_open_seconds": round(circuit_open_seconds, 1),
+            "network_backoff_seconds": round(network_backoff_seconds, 1),
+            "last_success": self._last_success_utc,
+            "last_error_time": self._last_error_utc,
+            "last_error": self._last_error,
+            "last_error_path": self._last_error_path,
+            "last_http_status": self._last_http_status,
+            "total_requests": self._total_requests,
+            "total_failures": self._total_failures,
+            "total_retries": self._total_retries,
+            "dns_failures": self._dns_failures,
+            "timeout_failures": self._timeout_failures,
+            "connection_failures": self._connection_failures,
+        }
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -92,6 +115,17 @@ class PeriodicalApi:
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
         }
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _trim_text(text: str | None) -> str:
+        if not text:
+            return ""
+        text = text.strip()
+        return text if len(text) <= MAX_ERROR_BODY_LENGTH else f"{text[:MAX_ERROR_BODY_LENGTH]}..."
 
     @staticmethod
     def _status_policy(status: int) -> str:
@@ -110,26 +144,15 @@ class PeriodicalApi:
         return "fail"
 
     @staticmethod
-    def _trim_text(text: str | None) -> str:
-        if not text:
-            return ""
-        text = text.strip()
-        if len(text) <= MAX_ERROR_BODY_LENGTH:
-            return text
-        return f"{text[:MAX_ERROR_BODY_LENGTH]}..."
-
-    @staticmethod
     def _retry_after_seconds(value: str | None) -> float | None:
         if not value:
             return None
-
         try:
             seconds = float(value)
             if seconds >= 0:
                 return min(seconds, MAX_RETRY_DELAY_SECONDS)
         except (TypeError, ValueError):
             pass
-
         try:
             retry_at = parsedate_to_datetime(value)
             if retry_at is None:
@@ -141,7 +164,6 @@ class PeriodicalApi:
                 return min(delay, MAX_RETRY_DELAY_SECONDS)
         except (TypeError, ValueError, OverflowError):
             return None
-
         return None
 
     @staticmethod
@@ -154,16 +176,12 @@ class PeriodicalApi:
     @staticmethod
     def _is_dns_error(err: BaseException) -> bool:
         dns_error_cls = getattr(aiohttp, "ClientConnectorDNSError", None)
-
         if dns_error_cls is not None and isinstance(err, dns_error_cls):
             return True
-
         if isinstance(err, aiohttp.ClientConnectorError):
             os_error = getattr(err, "os_error", None)
-
             if isinstance(os_error, socket.gaierror):
                 return True
-
             msg = str(err).lower()
             return any(
                 marker in msg
@@ -177,18 +195,13 @@ class PeriodicalApi:
                     "failed to resolve",
                 )
             )
-
         return False
 
     @staticmethod
     def _is_connect_error(err: BaseException) -> bool:
         return isinstance(
             err,
-            (
-                aiohttp.ClientConnectorError,
-                aiohttp.ServerDisconnectedError,
-                aiohttp.ClientOSError,
-            ),
+            (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, aiohttp.ClientOSError),
         )
 
     def _max_attempts_for_error(self, err: BaseException) -> int:
@@ -207,7 +220,6 @@ class PeriodicalApi:
         retry_after_delay = self._retry_after_seconds(retry_after)
         if retry_after_delay is not None:
             return retry_after_delay
-
         base = DEFAULT_DNS_BACKOFF_SECONDS if dns_error else DEFAULT_RETRY_BACKOFF_SECONDS
         delay = base * (2 ** max(attempt - 1, 0))
         jitter = random.uniform(0.0, min(1.0, delay * 0.25))
@@ -216,11 +228,7 @@ class PeriodicalApi:
     async def _wait_for_network_backoff(self, path: str) -> None:
         wait_time = self._network_backoff_until - asyncio.get_running_loop().time()
         if wait_time > 0:
-            _LOGGER.debug(
-                "Periodical API network backoff active for %s, waiting %.1fs",
-                path,
-                wait_time,
-            )
+            _LOGGER.debug("Periodical API network backoff active for %s, waiting %.1fs", path, wait_time)
             await asyncio.sleep(wait_time)
 
     def _set_network_backoff(self, delay: float) -> None:
@@ -230,110 +238,176 @@ class PeriodicalApi:
             loop.time() + min(delay, MAX_RETRY_DELAY_SECONDS),
         )
 
+    def _record_success(self, path: str, status: int | None = None) -> None:
+        self._last_success_utc = self._utc_now()
+        self._last_error = None
+        self._last_error_path = None
+        self._last_http_status = status
+        self._network_failures.clear()
+        self._circuit_open_until = 0.0
+
+    def _record_failure(
+        self,
+        path: str,
+        err: BaseException | str,
+        status: int | None = None,
+        dns_error: bool = False,
+        timeout_error: bool = False,
+        connection_error: bool = False,
+    ) -> None:
+        self._total_failures += 1
+        self._last_error_utc = self._utc_now()
+        self._last_error = self._trim_text(str(err))
+        self._last_error_path = path
+        self._last_http_status = status
+        if dns_error:
+            self._dns_failures += 1
+            self._record_network_failure()
+        elif timeout_error:
+            self._timeout_failures += 1
+            self._record_network_failure()
+        elif connection_error:
+            self._connection_failures += 1
+            self._record_network_failure()
+
+    def _record_network_failure(self) -> None:
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        cutoff = now - CIRCUIT_FAILURE_WINDOW_SECONDS
+        self._network_failures = [ts for ts in self._network_failures if ts >= cutoff]
+        self._network_failures.append(now)
+        if len(self._network_failures) >= CIRCUIT_FAILURE_THRESHOLD:
+            self._circuit_open_until = max(self._circuit_open_until, now + CIRCUIT_OPEN_SECONDS)
+
+    def _circuit_error(self, path: str) -> PeriodicalApiError | None:
+        remaining = self._circuit_open_until - asyncio.get_running_loop().time()
+        if remaining > 0:
+            return PeriodicalApiError(f"GET {path} skipped: API circuit open for {remaining:.0f}s")
+        return None
+
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        circuit_error = self._circuit_error(path)
+        if circuit_error is not None:
+            raise circuit_error
+
         url = f"{self._base_url}{path}"
         attempt = 0
         last_error: Exception | None = None
 
         while attempt < DEFAULT_DNS_RETRY_ATTEMPTS:
             attempt += 1
+            self._total_requests += 1
             await self._wait_for_network_backoff(path)
 
             try:
-                async with self._session.get(
-                    url,
-                    headers=self._headers,
-                    params=params,
-                    timeout=self._timeout,
-                ) as resp:
-                    status = resp.status
-                    policy = self._status_policy(status)
+                async with self._request_semaphore:
+                    async with self._session.get(
+                        url,
+                        headers=self._headers,
+                        params=params,
+                        timeout=self._timeout,
+                    ) as resp:
+                        status = resp.status
+                        policy = self._status_policy(status)
 
-                    if policy == "success":
-                        if status == 204:
-                            return {}
+                        if policy == "success":
+                            if status == 204:
+                                self._record_success(path, status)
+                                return {}
 
-                        try:
-                            return await resp.json(content_type=None)
-                        except Exception as err:  # noqa: BLE001
-                            text = await self._response_text(resp)
-                            content_type = resp.headers.get("Content-Type", "unknown")
-                            raise PeriodicalApiError(
-                                f"GET {path} failed: invalid JSON from HTTP {status}, "
-                                f"content-type={content_type}, body={text}"
-                            ) from err
+                            text = await resp.text()
+                            if not text.strip():
+                                err = PeriodicalApiError(f"GET {path} failed: HTTP {status} returned empty body")
+                                self._record_failure(path, err, status=status)
+                                raise err
 
-                    text = await self._response_text(resp)
+                            try:
+                                data = await resp.json(content_type=None)
+                            except Exception as err:  # noqa: BLE001
+                                content_type = resp.headers.get("Content-Type", "unknown")
+                                api_err = PeriodicalApiError(
+                                    f"GET {path} failed: invalid JSON from HTTP {status}, "
+                                    f"content-type={content_type}, body={self._trim_text(text)}"
+                                )
+                                self._record_failure(path, api_err, status=status)
+                                raise api_err from err
 
-                    if policy == "auth_fail":
-                        if status == 401:
-                            raise PeriodicalAuthError(
-                                f"GET {path} failed: HTTP 401 Unauthorized"
-                            )
-                        raise PeriodicalAuthError(f"GET {path} failed: HTTP 403 Forbidden")
+                            if not isinstance(data, (dict, list)):
+                                api_err = PeriodicalApiError(
+                                    f"GET {path} failed: expected JSON object/list, got {type(data).__name__}"
+                                )
+                                self._record_failure(path, api_err, status=status)
+                                raise api_err
 
-                    if policy == "retry":
-                        if attempt < DEFAULT_RETRY_ATTEMPTS:
-                            delay = self._retry_delay(attempt, resp.headers.get("Retry-After"))
-                            _LOGGER.debug(
-                                "Periodical API HTTP retry %s/%s for %s after HTTP %s, waiting %.1fs",
-                                attempt,
-                                DEFAULT_RETRY_ATTEMPTS,
-                                path,
-                                status,
-                                delay,
-                            )
-                            await asyncio.sleep(delay)
-                            continue
+                            self._record_success(path, status)
+                            return data
 
-                        raise PeriodicalApiError(
-                            f"GET {path} failed: HTTP {status}, retries exhausted: {text}"
-                        )
+                        text = await self._response_text(resp)
 
-                    if policy == "fail_redirect":
-                        location = resp.headers.get("Location")
-                        raise PeriodicalApiError(
-                            f"GET {path} failed: HTTP {status} redirect, Location={location}"
-                        )
+                        if policy == "auth_fail":
+                            err_cls = PeriodicalAuthError
+                            msg = "HTTP 401 Unauthorized" if status == 401 else "HTTP 403 Forbidden"
+                            api_err = err_cls(f"GET {path} failed: {msg}")
+                            self._record_failure(path, api_err, status=status)
+                            raise api_err
 
-                    raise PeriodicalApiError(
-                        f"GET {path} failed: HTTP {status} non-retryable error: {text}"
-                    )
+                        if policy == "retry":
+                            if attempt < DEFAULT_RETRY_ATTEMPTS:
+                                delay = self._retry_delay(attempt, resp.headers.get("Retry-After"))
+                                self._total_retries += 1
+                                if status == 429:
+                                    self._set_network_backoff(delay)
+                                _LOGGER.debug(
+                                    "Periodical API HTTP retry %s/%s for %s after HTTP %s, waiting %.1fs",
+                                    attempt,
+                                    DEFAULT_RETRY_ATTEMPTS,
+                                    path,
+                                    status,
+                                    delay,
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            api_err = PeriodicalApiError(f"GET {path} failed: HTTP {status}, retries exhausted: {text}")
+                            self._record_failure(path, api_err, status=status)
+                            raise api_err
+
+                        if policy == "fail_redirect":
+                            location = resp.headers.get("Location")
+                            api_err = PeriodicalApiError(f"GET {path} failed: HTTP {status} redirect, Location={location}")
+                            self._record_failure(path, api_err, status=status)
+                            raise api_err
+
+                        api_err = PeriodicalApiError(f"GET {path} failed: HTTP {status} non-retryable error: {text}")
+                        self._record_failure(path, api_err, status=status)
+                        raise api_err
 
             except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as err:
-                last_error = PeriodicalApiError(
-                    f"GET {path} timed out after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s"
-                )
-
-                if attempt < DEFAULT_RETRY_ATTEMPTS:
+                max_attempts = DEFAULT_RETRY_ATTEMPTS
+                last_error = PeriodicalApiError(f"GET {path} timed out after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s")
+                if attempt < max_attempts:
                     delay = self._retry_delay(attempt)
-                    _LOGGER.debug(
-                        "Periodical API timeout retry %s/%s for %s, waiting %.1fs",
-                        attempt,
-                        DEFAULT_RETRY_ATTEMPTS,
-                        path,
-                        delay,
-                    )
+                    self._total_retries += 1
+                    _LOGGER.debug("Periodical API timeout retry %s/%s for %s, waiting %.1fs", attempt, max_attempts, path, delay)
                     await asyncio.sleep(delay)
                     continue
-
-                raise PeriodicalApiError(
-                    f"GET {path} timed out after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s, "
-                    f"retries exhausted after {DEFAULT_RETRY_ATTEMPTS} attempts"
-                ) from err
+                api_err = PeriodicalApiError(
+                    f"GET {path} timed out after {DEFAULT_REQUEST_TIMEOUT_SECONDS}s, retries exhausted after {max_attempts} attempts"
+                )
+                self._record_failure(path, api_err, timeout_error=True)
+                raise api_err from err
 
             except aiohttp.ClientError as err:
                 dns_error = self._is_dns_error(err)
+                connect_error = self._is_connect_error(err)
                 max_attempts = self._max_attempts_for_error(err)
                 error_type = "DNS" if dns_error else "connection"
                 last_error = PeriodicalApiError(f"GET {path} {error_type} error: {err}")
 
                 if attempt < max_attempts:
                     delay = self._retry_delay(attempt, dns_error=dns_error)
-
+                    self._total_retries += 1
                     if dns_error:
                         self._set_network_backoff(delay)
-
                     _LOGGER.debug(
                         "Periodical API %s retry %s/%s for %s, waiting %.1fs: %s",
                         error_type,
@@ -346,15 +420,19 @@ class PeriodicalApi:
                     await asyncio.sleep(delay)
                     continue
 
-                raise PeriodicalApiError(
-                    f"GET {path} {error_type} error, retries exhausted after "
-                    f"{max_attempts} attempts: {err}"
-                ) from err
+                api_err = PeriodicalApiError(
+                    f"GET {path} {error_type} error, retries exhausted after {max_attempts} attempts: {err}"
+                )
+                self._record_failure(path, api_err, dns_error=dns_error, connection_error=connect_error)
+                raise api_err from err
 
         if last_error is not None:
+            self._record_failure(path, last_error)
             raise last_error
 
-        raise PeriodicalApiError(f"GET {path} failed: unknown API error")
+        api_err = PeriodicalApiError(f"GET {path} failed: unknown API error")
+        self._record_failure(path, api_err)
+        raise api_err
 
     async def get_me(self) -> dict[str, Any]:
         """GET /me — basic info about the authenticated user."""
@@ -385,68 +463,38 @@ class PeriodicalApi:
         """GET /users/{user_id}/schedule/week/{date} — week schedule."""
         return await self._get(f"/users/{user_id}/schedule/week/{date}")
 
-    async def get_schedule_range(
-        self,
-        user_id: int,
-        from_date: str,
-        to_date: str,
-    ) -> dict[str, Any]:
+    async def get_schedule_range(self, user_id: int, from_date: str, to_date: str) -> dict[str, Any]:
         """GET /users/{user_id}/schedule — date range schedule."""
-        return await self._get(
-            f"/users/{user_id}/schedule",
-            params={"from_date": from_date, "to_date": to_date},
-        )
+        return await self._get(f"/users/{user_id}/schedule", params={"from_date": from_date, "to_date": to_date})
 
     async def get_schedule_date(self, user_id: int, date: str) -> dict[str, Any]:
         """GET /users/{user_id}/schedule/{date} — specific date schedule."""
         return await self._get(f"/users/{user_id}/schedule/{date}")
 
-    async def get_pay_month(
-        self,
-        user_id: int,
-        year: int | None = None,
-        month: int | None = None,
-    ) -> dict[str, Any]:
+    async def get_pay_month(self, user_id: int, year: int | None = None, month: int | None = None) -> dict[str, Any]:
         """GET /users/{user_id}/pay/month — monthly pay summary."""
         params: dict[str, Any] = {}
-
         if year:
             params["year"] = year
         if month:
             params["month"] = month
-
         return await self._get(f"/users/{user_id}/pay/month", params=params or None)
 
-    async def get_vacation_balance(
-        self,
-        user_id: int,
-        year: int | None = None,
-    ) -> dict[str, Any]:
+    async def get_vacation_balance(self, user_id: int, year: int | None = None) -> dict[str, Any]:
         """GET /users/{user_id}/vacation/balance — vacation balance."""
         params = {"year": year} if year else None
         return await self._get(f"/users/{user_id}/vacation/balance", params=params)
 
-    async def get_absences(
-        self,
-        user_id: int,
-        year: int | None = None,
-    ) -> dict[str, Any]:
+    async def get_absences(self, user_id: int, year: int | None = None) -> dict[str, Any]:
         """GET /users/{user_id}/absences — list of absences."""
         params = {"year": year} if year else None
         return await self._get(f"/users/{user_id}/absences", params=params)
 
-    async def get_next_shift(
-        self,
-        user_id: int,
-        date: str | None = None,
-        time: str | None = None,
-    ) -> dict[str, Any]:
+    async def get_next_shift(self, user_id: int, date: str | None = None, time: str | None = None) -> dict[str, Any]:
         """GET /users/{user_id}/next-shift — next working day."""
         params: dict[str, Any] = {}
-
         if date:
             params["date"] = date
         if time:
             params["time"] = time
-
         return await self._get(f"/users/{user_id}/next-shift", params=params or None)
