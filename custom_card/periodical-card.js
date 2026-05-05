@@ -67,10 +67,6 @@ const ENTITY_MAP = {
   absences:             { domain: 'sensor',        suffix: 'absences_this_year'       },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Date / time helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 /** Parse "YYYY-MM-DD" as LOCAL midnight — new Date("YYYY-MM-DD") is UTC and
  *  shifts the date by the local offset (e.g. Sweden UTC+2 → wrong day). */
 function parseLocalDate(str) {
@@ -150,9 +146,6 @@ function fmtSEK(val) {
   return Number(val).toLocaleString('sv-SE', { style:'currency', currency:'SEK', maximumFractionDigits:0 });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Co-worker grouping
-// ─────────────────────────────────────────────────────────────────────────────
 const SHIFT_GROUPS = [
   { key:'day',      label:'Day shift',     match:(c,l) => /dag/i.test(l)       || /^D/i.test(c)  },
   { key:'evening',  label:'Evening shift', match:(c,l) => /kv[äa]ll/i.test(l) || /^(E|K)/i.test(c) },
@@ -178,9 +171,6 @@ function groupCoworkers(members) {
 
 function cwName(cw) { return typeof cw === 'string' ? cw : (cw?.name || '?'); }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  CSS — 100% HA theme variables
-// ─────────────────────────────────────────────────────────────────────────────
 const CARD_CSS = `
   :host { --r:12px; --rs:8px; --gap:14px; display:block; }
 
@@ -331,13 +321,8 @@ class PeriodicalCard extends HTMLElement {
     // ── Data ─────────────────────────────────────────────────────────────────
     const isWorking   = this._val('working_today') === 'on';
     const isAbsent    = this._val('absent_today')  === 'on';
-    // Derive display name: config override → strip " Working Today" from
-    // the binary sensor's friendly_name → capitalised prefix fallback.
-    const _friendly = this._state('working_today')
-      ?.attributes?.friendly_name
-      ?.replace(/\s*Working Today\s*$/i, '')
-      .trim();
-    const title = this._config.name || _friendly || (prefix[0].toUpperCase() + prefix.slice(1));
+    // Keep display name generic by default. Use `name:` in card config if you want a custom title.
+    const title = this._config.name || 'User';
     const rotWeek     = this._val('rotation_week');
 
     const shiftStart  = this._val('shift_start');
@@ -614,7 +599,7 @@ class PeriodicalCardEditor extends HTMLElement {
           <div style="font-size:11px;color:var(--secondary-text-color);margin-top:4px">e.g. <code>user</code> → <code>sensor.user_shift_start_today</code></div>
         </div>
         <div style="font-size:11px;color:var(--secondary-text-color);padding:10px 12px;border-radius:6px;background:var(--secondary-background-color)">
-          ✅ All entities are auto-discovered — no manual mapping needed.
+           All entities are auto-discovered — no manual mapping needed.
         </div>
       </div>`;
     this.querySelector('#n').addEventListener('change', e => this._fire({...c, name:e.target.value||undefined}));
