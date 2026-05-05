@@ -47,11 +47,6 @@ class PeriodicalSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], Any]
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _local_tz() -> timezone:
     """Return the local UTC offset as a fixed-offset timezone."""
     offset_sec = -(_time_mod.altzone if _time_mod.daylight else _time_mod.timezone)
@@ -117,7 +112,7 @@ def _get_day_list(data_block: Any) -> list[dict]:
         val = data_block.get(key)
         if isinstance(val, list):
             return val
-    # year response may nest weeks
+
     weeks = data_block.get("weeks")
     if isinstance(weeks, list):
         days: list[dict] = []
@@ -160,11 +155,6 @@ def _day_hours(day: dict) -> float:
     except (IndexError, ValueError):
         return 0.0
 
-
-# ---------------------------------------------------------------------------
-# Today's shift
-# ---------------------------------------------------------------------------
-
 def _get_today_shift(data: dict) -> dict | None:
     for key in (DATA_STATUS, DATA_SCHEDULE_TODAY):
         day = data.get(key)
@@ -203,11 +193,6 @@ def _today_shift_attrs(data: dict) -> dict[str, Any]:
         "end_time":    shift.get("end_time"),
     }
 
-
-# ---------------------------------------------------------------------------
-# Co-workers  (real key: "coworkers", each entry is a dict)
-# ---------------------------------------------------------------------------
-
 def _get_coworkers(data: dict) -> list[dict]:
     for key in (DATA_STATUS, DATA_SCHEDULE_TODAY):
         day = data.get(key)
@@ -234,10 +219,6 @@ def _today_coworkers_attrs(data: dict) -> dict[str, Any]:
         ]
     }
 
-
-# ---------------------------------------------------------------------------
-# Today's status
-# ---------------------------------------------------------------------------
 
 def _status_today(data: dict) -> str | None:
     st = data.get(DATA_STATUS) or {}
@@ -276,10 +257,6 @@ def _status_attrs(data: dict) -> dict[str, Any]:
     return attrs
 
 
-# ---------------------------------------------------------------------------
-# Week schedule  (/schedule/week/{today})
-# ---------------------------------------------------------------------------
-
 def _week_shifts_count(data: dict) -> int | None:
     sw = data.get(DATA_SCHEDULE_WEEK)
     if sw is None:
@@ -315,10 +292,6 @@ def _week_attrs(data: dict) -> dict[str, Any]:
         })
     return {"days": [s for s in schedule if any(v for v in s.values())]}
 
-
-# ---------------------------------------------------------------------------
-# Year schedule  (/schedule/year)
-# ---------------------------------------------------------------------------
 
 def _year_total_shifts(data: dict) -> int | None:
     sy = data.get(DATA_SCHEDULE_YEAR)
@@ -375,10 +348,6 @@ def _year_attrs(data: dict) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Next shift  (DATA_NEXT_SHIFT — no date param, upcoming from now)
-# ---------------------------------------------------------------------------
-
 def _next_shift_date(data: dict) -> date | None:
     ns = data.get(DATA_NEXT_SHIFT)
     return _parse_iso_date(ns.get("date")) if ns else None
@@ -398,10 +367,6 @@ def _next_shift_attrs(data: dict) -> dict[str, Any]:
     return _shift_attrs_from_ns(data.get(DATA_NEXT_SHIFT) or {})
 
 
-# ---------------------------------------------------------------------------
-# Tomorrow's shift  (DATA_NEXT_SHIFT_TOMORROW — always tomorrow)
-# ---------------------------------------------------------------------------
-
 def _tomorrow_shift_date(data: dict) -> date | None:
     ns = data.get(DATA_NEXT_SHIFT_TOMORROW)
     return _parse_iso_date(ns.get("date")) if ns else None
@@ -420,10 +385,6 @@ def _tomorrow_shift_end(data: dict) -> str | None:
 def _tomorrow_shift_attrs(data: dict) -> dict[str, Any]:
     return _shift_attrs_from_ns(data.get(DATA_NEXT_SHIFT_TOMORROW) or {})
 
-
-# ---------------------------------------------------------------------------
-# Vacation
-# ---------------------------------------------------------------------------
 
 def _vacation_remaining(data: dict) -> float | None:
     vb = data.get(DATA_VACATION_BALANCE)
@@ -452,12 +413,6 @@ def _vacation_total(data: dict) -> float | None:
 def _vacation_attrs(data: dict) -> dict[str, Any]:
     return {k: v for k, v in (data.get(DATA_VACATION_BALANCE) or {}).items()}
 
-
-# ---------------------------------------------------------------------------
-# Pay  (real fields: brutto_pay, netto_pay, total_hours, num_shifts,
-#        oncall_pay, oncall_hours, ot_pay, sick_days, sick_hours,
-#        vab_days, vab_hours, leave_days, leave_hours, ob_pay, ob_hours)
-# ---------------------------------------------------------------------------
 
 def _pay_float(data: dict, *keys: str) -> float | None:
     pm = data.get(DATA_PAY_MONTH)
@@ -547,10 +502,6 @@ def _pay_attrs(data: dict) -> dict[str, Any]:
     return {k: pm[k] for k in keep if k in pm}
 
 
-# ---------------------------------------------------------------------------
-# Absences
-# ---------------------------------------------------------------------------
-
 def _absences_count(data: dict) -> int:
     ab = data.get(DATA_ABSENCES)
     if isinstance(ab, list):
@@ -567,10 +518,6 @@ def _absences_attrs(data: dict) -> dict[str, Any]:
         return {"absences": ab}
     return ab or {}
 
-
-# ---------------------------------------------------------------------------
-# Monthly schedule
-# ---------------------------------------------------------------------------
 
 def _schedule_month_working_days(data: dict) -> int | None:
     sm = data.get(DATA_SCHEDULE_MONTH)
@@ -594,14 +541,8 @@ def _schedule_month_attrs(data: dict) -> dict[str, Any]:
         if k in ("month", "year", "total_hours", "working_days", "days_off", "num_shifts")
     }
 
-
-# ---------------------------------------------------------------------------
-# Sensor descriptions
-# ---------------------------------------------------------------------------
-
 SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
 
-    # ── Today's shift ──────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="shift_start_today",
         translation_key="shift_start_today",
@@ -631,7 +572,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=_today_coworkers_attrs,
     ),
 
-    # ── Today's status ─────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="status_today",
         translation_key="status_today",
@@ -660,7 +600,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── This week's schedule  (/schedule/week/{today}) ─────────────────────
     PeriodicalSensorDescription(
         key="shifts_this_week",
         translation_key="shifts_this_week",
@@ -682,7 +621,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=_week_attrs,
     ),
 
-    # ── This month's schedule ──────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="working_days_month",
         translation_key="working_days_month",
@@ -694,7 +632,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=_schedule_month_attrs,
     ),
 
-    # ── This year's schedule  (/schedule/year) ─────────────────────────────
     PeriodicalSensorDescription(
         key="shifts_this_year",
         translation_key="shifts_this_year",
@@ -715,6 +652,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_year_remaining_shifts,
         attr_fn=None,
     ),
+
     PeriodicalSensorDescription(
         key="hours_this_year",
         translation_key="hours_this_year",
@@ -726,7 +664,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=_year_attrs,
     ),
 
-    # ── Next shift (upcoming from now) ─────────────────────────────────────
     PeriodicalSensorDescription(
         key="next_shift_date",
         translation_key="next_shift_date",
@@ -736,6 +673,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_next_shift_date,
         attr_fn=_next_shift_attrs,
     ),
+    
     PeriodicalSensorDescription(
         key="next_shift_start",
         translation_key="next_shift_start",
@@ -744,6 +682,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_next_shift_start,
         attr_fn=_next_shift_attrs,
     ),
+    
     PeriodicalSensorDescription(
         key="next_shift_end",
         translation_key="next_shift_end",
@@ -753,7 +692,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Tomorrow's shift (always tomorrow's calendar date) ─────────────────
     PeriodicalSensorDescription(
         key="tomorrow_shift_date",
         translation_key="tomorrow_shift_date",
@@ -763,6 +701,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_tomorrow_shift_date,
         attr_fn=_tomorrow_shift_attrs,
     ),
+    
     PeriodicalSensorDescription(
         key="tomorrow_shift_start",
         translation_key="tomorrow_shift_start",
@@ -780,7 +719,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Vacation ───────────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="vacation_remaining",
         translation_key="vacation_remaining",
@@ -791,6 +729,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_vacation_remaining,
         attr_fn=_vacation_attrs,
     ),
+    
     PeriodicalSensorDescription(
         key="vacation_used",
         translation_key="vacation_used",
@@ -801,6 +740,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_vacation_used,
         attr_fn=None,
     ),
+    
     PeriodicalSensorDescription(
         key="vacation_total",
         translation_key="vacation_total",
@@ -811,7 +751,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Pay — core ─────────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="pay_month_gross",
         translation_key="pay_month_gross",
@@ -822,6 +761,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_pay_brutto,
         attr_fn=_pay_attrs,
     ),
+    
     PeriodicalSensorDescription(
         key="pay_month_netto",
         translation_key="pay_month_netto",
@@ -832,6 +772,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_pay_netto,
         attr_fn=None,
     ),
+    
     PeriodicalSensorDescription(
         key="pay_month_hours",
         translation_key="pay_month_hours",
@@ -842,6 +783,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_pay_hours,
         attr_fn=None,
     ),
+    
     PeriodicalSensorDescription(
         key="pay_month_shifts",
         translation_key="pay_month_shifts",
@@ -853,7 +795,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Pay — on-call ──────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="pay_oncall_month",
         translation_key="pay_oncall_month",
@@ -864,6 +805,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         value_fn=_pay_oncall,
         attr_fn=None,
     ),
+    
     PeriodicalSensorDescription(
         key="pay_oncall_hours_month",
         translation_key="pay_oncall_hours_month",
@@ -875,7 +817,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Pay — overtime ─────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="pay_overtime_month",
         translation_key="pay_overtime_month",
@@ -887,7 +828,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Pay — absence / sick / VAB / leave ────────────────────────────────
     PeriodicalSensorDescription(
         key="pay_sick_days_month",
         translation_key="pay_sick_days_month",
@@ -929,7 +869,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         attr_fn=None,
     ),
 
-    # ── Absences ───────────────────────────────────────────────────────────
     PeriodicalSensorDescription(
         key="absences_count",
         translation_key="absences_count",
@@ -942,10 +881,6 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
     ),
 )
 
-
-# ---------------------------------------------------------------------------
-# Platform setup
-# ---------------------------------------------------------------------------
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -1005,5 +940,5 @@ class PeriodicalSensor(CoordinatorEntity[PeriodicalCoordinator], SensorEntity):
             return {}
         try:
             return self.entity_description.attr_fn(self.coordinator.data) or {}
-        except Exception:  # noqa: BLE001
+        except Exception: 
             return {}
