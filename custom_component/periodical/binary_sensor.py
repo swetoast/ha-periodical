@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_USER_ID, CONF_USER_NAME, DATA_ABSENCES, DATA_API_HEALTH, DATA_SCHEDULE_TODAY, DATA_STATUS, DOMAIN
-from .coordinator import ENDPOINT_NAMES, REFRESH_TIERS, PeriodicalCoordinator
+from .coordinator import ENDPOINT_NAMES, PeriodicalCoordinator
 from .helpers import normalize_absence_items, schedule_code
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,66 +62,148 @@ def _has_absence_today(data: dict[str, Any]) -> bool | None:
 
 
 def _api_problem(data: dict[str, Any]) -> bool | None:
+    """Determine if there are any API problems."""
     health = data.get(DATA_API_HEALTH)
     if not isinstance(health, dict):
         return None
     api = health.get("api") if isinstance(health.get("api"), dict) else {}
-    return bool(not health.get("connected", False) or health.get("partial_failure") or health.get("using_stale_data") or health.get("failed_endpoints") or api.get("circuit_open"))
+    return bool(
+        not health.get("connected", False) 
+        or health.get("partial_failure") 
+        or health.get("using_stale_data") 
+        or health.get("failed_endpoints") 
+        or api.get("circuit_open")
+    )
 
 
 def _api_health_attrs(data: dict[str, Any]) -> dict[str, Any]:
+    """Consolidate all API diagnostics into organized attributes."""
     health = data.get(DATA_API_HEALTH)
     if not isinstance(health, dict):
         return {}
+    
     api = health.get("api") if isinstance(health.get("api"), dict) else {}
+    endpoint_stats = health.get("endpoint_stats") if isinstance(health.get("endpoint_stats"), dict) else {}
+    optimization = health.get("optimization") if isinstance(health.get("optimization"), dict) else {}
+    
+    # Build endpoint summary - cleaner view of all endpoints
+    endpoint_summary = {}
+    available_endpoints = []
+    unavailable_endpoints = []
+    stale_endpoints = []
+    disabled_endpoints = []
+    
+    for endpoint_key, stats in endpoint_stats.items():
+        if not isinstance(stats, dict):
+            continue
+            
+        endpoint_name = ENDPOINT_NAMES.get(endpoint_key, endpoint_key.replace("_", " ").title())
+        
+        # Categorize endpoints
+        if not stats.get("enabled"):
+            disabled_endpoints.append(endpoint_name)
+            continue
+            
+        if stats.get("stale"):
+            stale_endpoints.append(endpoint_name)
+        
+        if stats.get("available"):
+            available_endpoints.append(endpoint_name)
+        else:
+            unavailable_endpoints.append(endpoint_name)
+        
+        # Build detailed status for each endpoint
+        endpoint_summary[endpoint_name] = {
+            "available": stats.get("available"),
+            "stale": stats.get("stale"),
+            "last_success": stats.get("last_success"),
+            "last_failure": stats.get("last_failure"),
+            "success_count": stats.get("success_count", 0),
+            "failure_count": stats.get("failure_count", 0),
+            "last_duration_ms": stats.get("last_duration_ms"),
+            "last_error": stats.get("last_error"),
+        }
+        # Remove None values
+        endpoint_summary[endpoint_name] = {
+            k: v for k, v in endpoint_summary[endpoint_name].items() if v is not None
+        }
+    
+    # Main attributes - organized view
     attrs = {
-        "connected": health.get("connected"), "partial_failure": health.get("partial_failure"), "using_stale_data": health.get("using_stale_data"),
-        "failed_endpoints": health.get("failed_endpoints"), "stale_keys": health.get("stale_keys"), "success_count": health.get("success_count"),
-        "failure_count": health.get("failure_count"), "last_update_success": health.get("last_update_success"), "last_error": health.get("last_error"),
-        "endpoint_stats": health.get("endpoint_stats"), "optimization": health.get("optimization"), "api_base_url": api.get("base_url"),
-        "api_circuit_open": api.get("circuit_open"), "api_circuit_open_seconds": api.get("circuit_open_seconds"), "api_network_backoff_seconds": api.get("network_backoff_seconds"),
-        "api_last_success": api.get("last_success"), "api_last_error_time": api.get("last_error_time"), "api_last_error": api.get("last_error"),
-        "api_last_error_path": api.get("last_error_path"), "api_last_http_status": api.get("last_http_status"), "api_total_requests": api.get("total_requests"),
-        "api_total_failures": api.get("total_failures"), "api_total_retries": api.get("total_retries"), "api_dns_failures": api.get("dns_failures"),
-        "api_timeout_failures": api.get("timeout_failures"), "api_connection_failures": api.get("connection_failures"), "api_endpoint_stats": api.get("endpoint_stats"),
+        # Overall status
+        "connected": health.get("connected"),
+        "partial_failure": health.get("partial_failure"),
+        "using_stale_data": health.get("using_stale_data"),
+        "last_update_success": health.get("last_update_success"),
+        "last_error": health.get("last_error"),
+        
+        # Endpoint counts and lists
+        "total_endpoints": len(endpoint_stats),
+        "available_count": len(available_endpoints),
+        "unavailable_count": len(unavailable_endpoints),
+        "stale_count": len(stale_endpoints),
+        "disabled_count": len(disabled_endpoints),
+        "available_endpoints": available_endpoints,
+        "unavailable_endpoints": unavailable_endpoints,
+        "stale_endpoints": stale_endpoints,
+        "disabled_endpoints": disabled_endpoints,
+        
+        # Current refresh status
+        "failed_endpoints": health.get("failed_endpoints"),
+        "success_count": health.get("success_count"),
+        "failure_count": health.get("failure_count"),
+        
+        # Optimization metrics
+        "endpoints_fetched_last_update": optimization.get("endpoints_fetched"),
+        "endpoints_skipped_last_update": optimization.get("endpoints_skipped"),
+        "total_fetches": optimization.get("fetch_counts"),
+        "total_skips": optimization.get("skip_counts"),
+        
+        # API client health
+        "api_circuit_open": api.get("circuit_open"),
+        "api_circuit_open_seconds": api.get("circuit_open_seconds"),
+        "api_last_success": api.get("last_success"),
+        "api_last_error": api.get("last_error"),
+        "api_last_http_status": api.get("last_http_status"),
+        "api_total_requests": api.get("total_requests"),
+        "api_total_failures": api.get("total_failures"),
+        "api_total_retries": api.get("total_retries"),
+        
+        # Detailed per-endpoint stats (for advanced users)
+        "endpoint_details": endpoint_summary,
     }
+    
     return {key: value for key, value in attrs.items() if value is not None}
 
 
-def _endpoint_available_fn(endpoint_key: str) -> Callable[[dict[str, Any]], bool | None]:
-    def _available(data: dict[str, Any]) -> bool | None:
-        health = data.get(DATA_API_HEALTH)
-        if not isinstance(health, dict):
-            return None
-        stats = health.get("endpoint_stats")
-        if not isinstance(stats, dict):
-            return None
-        endpoint = stats.get(endpoint_key)
-        if not isinstance(endpoint, dict):
-            return None
-        if endpoint.get("enabled") is False:
-            return None
-        available = endpoint.get("available")
-        return bool(available) if available is not None else None
-    return _available
-
-
-def _endpoint_attrs_fn(endpoint_key: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    def _attrs(data: dict[str, Any]) -> dict[str, Any]:
-        health = data.get(DATA_API_HEALTH)
-        stats = health.get("endpoint_stats") if isinstance(health, dict) else None
-        endpoint = stats.get(endpoint_key) if isinstance(stats, dict) else None
-        return endpoint if isinstance(endpoint, dict) else {}
-    return _attrs
-
-
 BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
-    PeriodicalBinarySensorDescription(key="working_today", translation_key="working_today", name="Working Today", icon="mdi:briefcase-check", device_class=BinarySensorDeviceClass.OCCUPANCY, is_on_fn=_is_working_today, attr_fn=_working_today_attrs),
-    PeriodicalBinarySensorDescription(key="absent_today", translation_key="absent_today", name="Absent Today", icon="mdi:account-off", device_class=BinarySensorDeviceClass.PROBLEM, is_on_fn=_has_absence_today),
-    PeriodicalBinarySensorDescription(key="api_problem", translation_key="api_problem", name="API Problem", icon="mdi:cloud-alert", device_class=BinarySensorDeviceClass.PROBLEM, entity_category=EntityCategory.DIAGNOSTIC, is_on_fn=_api_problem, attr_fn=_api_health_attrs),
-) + tuple(
-    PeriodicalBinarySensorDescription(key=f"api_{endpoint_key}_available", translation_key=f"api_{endpoint_key}_available", name=f"API {ENDPOINT_NAMES.get(endpoint_key, endpoint_key.replace('_', ' ').title())} Available", icon="mdi:api", device_class=BinarySensorDeviceClass.CONNECTIVITY, entity_category=EntityCategory.DIAGNOSTIC, is_on_fn=_endpoint_available_fn(endpoint_key), attr_fn=_endpoint_attrs_fn(endpoint_key))
-    for endpoint_key in REFRESH_TIERS
+    PeriodicalBinarySensorDescription(
+        key="working_today",
+        translation_key="working_today",
+        name="Working Today",
+        icon="mdi:briefcase-check",
+        device_class=BinarySensorDeviceClass.OCCUPANCY,
+        is_on_fn=_is_working_today,
+        attr_fn=_working_today_attrs,
+    ),
+    PeriodicalBinarySensorDescription(
+        key="absent_today",
+        translation_key="absent_today",
+        name="Absent Today",
+        icon="mdi:account-off",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on_fn=_has_absence_today,
+    ),
+    PeriodicalBinarySensorDescription(
+        key="api_problem",
+        translation_key="api_problem",
+        name="API Problem",
+        icon="mdi:cloud-alert",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        is_on_fn=_api_problem,
+        attr_fn=_api_health_attrs,
+    ),
 )
 
 

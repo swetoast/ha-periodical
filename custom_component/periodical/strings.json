@@ -171,40 +171,7 @@
         "name": "Absent Today"
       },
       "api_problem": {
-        "name": "API Problem"
-      },
-      "api_status_available": {
-        "name": "API Status Available"
-      },
-      "api_schedule_today_available": {
-        "name": "API Schedule Today Available"
-      },
-      "api_next_shift_available": {
-        "name": "API Next Shift Available"
-      },
-      "api_schedule_week_available": {
-        "name": "API Schedule Week Available"
-      },
-      "api_next_shift_tomorrow_available": {
-        "name": "API Next Shift Tomorrow Available"
-      },
-      "api_absences_available": {
-        "name": "API Absences Available"
-      },
-      "api_schedule_month_available": {
-        "name": "API Schedule Month Available"
-      },
-      "api_vacation_balance_available": {
-        "name": "API Vacation Balance Available"
-      },
-      "api_me_available": {
-        "name": "API Me Available"
-      },
-      "api_schedule_year_available": {
-        "name": "API Schedule Year Available"
-      },
-      "api_pay_month_available": {
-        "name": "API Pay Month Available"
+        "name": "API Diagnostics"
       }
     }
   },
