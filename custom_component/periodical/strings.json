@@ -3,28 +3,62 @@
     "step": {
       "user": {
         "title": "Connect to Periodical",
-        "description": "Enter your Periodical API key. You can find it in the Periodical web portal under Settings → API.",
+        "description": "Enter your Periodical API key.",
         "data": {
           "api_key": "API Key",
           "base_url": "API Base URL"
-        },
-        "data_description": {
-          "api_key": "Your personal API key (Bearer token)",
-          "base_url": "Leave as default unless you self-host Periodical"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Periodical",
+        "description": "Enter a new Periodical API key.",
+        "data": {
+          "api_key": "API Key"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid API key — authentication failed.",
-      "cannot_connect": "Could not connect to the Periodical API. Check your network and Base URL.",
-      "no_user_id": "API key authenticated but no user ID was returned. Contact support.",
-      "unknown": "An unexpected error occurred. Check Home Assistant logs for details."
+      "invalid_auth": "Invalid API key.",
+      "cannot_connect": "Could not connect to the Periodical API.",
+      "no_user_id": "No user ID was returned.",
+      "unknown": "Unexpected error."
     },
     "abort": {
-      "already_configured": "This Periodical account is already configured."
+      "already_configured": "This Periodical account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Periodical options",
+        "description": "Configure polling and endpoint loading.",
+        "data": {
+          "update_interval_minutes": "Update interval (minutes)",
+          "request_timeout_seconds": "Request timeout (seconds)",
+          "retry_attempts": "Retry attempts",
+          "max_concurrent_requests": "Max concurrent requests",
+          "endpoint_status": "Enable Status",
+          "endpoint_schedule_today": "Enable Schedule Today",
+          "endpoint_next_shift": "Enable Next Shift",
+          "endpoint_schedule_week": "Enable Schedule Week",
+          "endpoint_next_shift_tomorrow": "Enable Next Shift Tomorrow",
+          "endpoint_absences": "Enable Absences",
+          "endpoint_schedule_month": "Enable Schedule Month",
+          "endpoint_vacation_balance": "Enable Vacation Balance",
+          "endpoint_me": "Enable Me",
+          "endpoint_schedule_year": "Enable Schedule Year",
+          "endpoint_pay_month": "Enable Pay Month"
+        }
+      }
     }
   },
   "entity": {
+    "button": {
+      "refresh": {
+        "name": "Refresh"
+      }
+    },
     "sensor": {
       "shift_start_today": {
         "name": "Shift Start Today"
@@ -34,6 +68,9 @@
       },
       "coworkers_today": {
         "name": "Co-workers Today"
+      },
+      "oncall_today": {
+        "name": "On-call Today"
       },
       "status_today": {
         "name": "Status Today"
@@ -135,7 +172,46 @@
       },
       "api_problem": {
         "name": "API Problem"
+      },
+      "api_status_available": {
+        "name": "API Status Available"
+      },
+      "api_schedule_today_available": {
+        "name": "API Schedule Today Available"
+      },
+      "api_next_shift_available": {
+        "name": "API Next Shift Available"
+      },
+      "api_schedule_week_available": {
+        "name": "API Schedule Week Available"
+      },
+      "api_next_shift_tomorrow_available": {
+        "name": "API Next Shift Tomorrow Available"
+      },
+      "api_absences_available": {
+        "name": "API Absences Available"
+      },
+      "api_schedule_month_available": {
+        "name": "API Schedule Month Available"
+      },
+      "api_vacation_balance_available": {
+        "name": "API Vacation Balance Available"
+      },
+      "api_me_available": {
+        "name": "API Me Available"
+      },
+      "api_schedule_year_available": {
+        "name": "API Schedule Year Available"
+      },
+      "api_pay_month_available": {
+        "name": "API Pay Month Available"
       }
+    }
+  },
+  "issues": {
+    "invalid_auth": {
+      "title": "Periodical authentication failed",
+      "description": "The Periodical API key is invalid or no longer accepted. Re-authenticate the integration."
     }
   }
 }

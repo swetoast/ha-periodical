@@ -1,0 +1,87 @@
+refresh:
+  name: Refresh
+  description: Force refresh all enabled Periodical endpoints now.
+  fields: {}
+
+refresh_endpoint:
+  name: Refresh endpoint
+  description: Force refresh one Periodical endpoint now.
+  fields:
+    endpoint:
+      required: true
+      selector:
+        select:
+          options:
+            - status
+            - schedule_today
+            - next_shift
+            - schedule_week
+            - next_shift_tomorrow
+            - absences
+            - schedule_month
+            - vacation_balance
+            - me
+            - schedule_year
+            - pay_month
+
+get_schedule_date:
+  name: Get schedule date
+  description: Fetch schedule for a specific date and fire a periodical_schedule_date event.
+  fields:
+    date:
+      required: true
+      selector:
+        date: {}
+
+get_schedule_week:
+  name: Get schedule week
+  description: Fetch schedule week and fire a periodical_schedule_week event.
+  fields:
+    date:
+      required: true
+      selector:
+        date: {}
+
+get_schedule_range:
+  name: Get schedule range
+  description: Fetch schedule for a date range and fire a periodical_schedule_range event.
+  fields:
+    from_date:
+      required: true
+      selector:
+        date: {}
+    to_date:
+      required: true
+      selector:
+        date: {}
+
+get_pay_month:
+  name: Get pay month
+  description: Fetch pay summary and fire a periodical_pay_month event.
+  fields:
+    year:
+      required: false
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
+    month:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+
+get_vacation_balance:
+  name: Get vacation balance
+  description: Fetch vacation balance and fire a periodical_vacation_balance event.
+  fields:
+    year:
+      required: false
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
