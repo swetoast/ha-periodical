@@ -85,6 +85,7 @@ def _shift_attrs_from_ns(ns: dict) -> dict[str, Any]:
         attrs["shift_color"] = shift.get("color")
         attrs["start_time"]  = shift.get("start_time")
         attrs["end_time"]    = shift.get("end_time")
+        attrs["overnight"]   = shift.get("overnight")
     return {k: v for k, v in attrs.items() if v is not None}
 
 
@@ -218,6 +219,7 @@ def _today_shift_attrs(data: dict) -> dict[str, Any]:
         "shift_color": shift.get("color"),
         "start_time":  shift.get("start_time"),
         "end_time":    shift.get("end_time"),
+        "overnight":   shift.get("overnight"),
     }
 
 def _get_coworkers(data: dict) -> list[dict]:
