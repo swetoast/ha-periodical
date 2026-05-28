@@ -16,6 +16,7 @@ SCAN_INTERVAL = timedelta(minutes=15)
 DATA_ME = "me"
 DATA_STATUS = "status"
 DATA_SCHEDULE_TODAY = "schedule_today"
+DATA_SHIFTS = "shifts"
 DATA_SCHEDULE_WEEK = "schedule_week"
 DATA_SCHEDULE_MONTH = "schedule_month"
 DATA_SCHEDULE_YEAR = "schedule_year"

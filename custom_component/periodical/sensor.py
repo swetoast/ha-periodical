@@ -29,6 +29,7 @@ from .const import (
     DATA_PAY_MONTH,
     DATA_SCHEDULE_MONTH,
     DATA_SCHEDULE_TODAY,
+    DATA_SHIFTS,
     DATA_SCHEDULE_WEEK,
     DATA_SCHEDULE_YEAR,
     DATA_STATUS,
@@ -116,6 +117,16 @@ def _get_day_list(data_block: Any) -> list[dict]:
     return []
 
 
+def _shift_index(data: dict) -> dict[str, dict]:
+    """Map shift code -> canonical definition from the /shifts catalog."""
+    defs = data.get(DATA_SHIFTS)
+    if isinstance(defs, list):
+        return {d["code"]: d for d in defs if isinstance(d, dict) and d.get("code")}
+    if isinstance(defs, dict):
+        return defs
+    return {}
+
+
 def _day_is_working(day: dict) -> bool:
     """Return True if a day dict represents a working shift."""
     status = day.get("status")
@@ -127,8 +138,14 @@ def _day_is_working(day: dict) -> bool:
     return bool(day.get("start_time"))
 
 
-def _day_hours(day: dict) -> float:
-    """Estimate hours from a day dict (start_time / end_time or total_hours)."""
+def _day_hours(day: dict, index: dict[str, dict] | None = None) -> float:
+    """Estimate hours from a day dict.
+
+    Prefers an explicit total_hours, otherwise derives the span from
+    start_time/end_time.  The authoritative `overnight` flag (from /shifts,
+    looked up by code when missing on the day) disambiguates shifts whose
+    clock times are equal, e.g. on-call 00:00->00:00 = 24h.
+    """
     if day.get("total_hours"):
         try:
             return float(day["total_hours"])
@@ -137,15 +154,25 @@ def _day_hours(day: dict) -> float:
     shift = day.get("shift") if isinstance(day.get("shift"), dict) else day
     start_str = shift.get("start_time")
     end_str   = shift.get("end_time")
+    overnight = shift.get("overnight")
+    code = shift.get("code")
+    if index and code in index:
+        canon = index[code]
+        start_str = start_str or canon.get("start_time")
+        end_str   = end_str or canon.get("end_time")
+        if overnight is None:
+            overnight = canon.get("overnight")
     if not start_str or not end_str:
         return 0.0
     try:
         sh, sm = int(start_str.split(":")[0]), int(start_str.split(":")[1])
         eh, em = int(end_str.split(":")[0]),   int(end_str.split(":")[1])
-        total = (eh * 60 + em) - (sh * 60 + sm)
-        if total < 0:   # overnight
-            total += 24 * 60
-        return round(total / 60, 2)
+        duration = (eh * 60 + em) - (sh * 60 + sm)
+        if duration < 0:                       # clearly crosses midnight
+            duration += 24 * 60
+        elif duration == 0:                    # equal times: 24h iff overnight
+            duration = 24 * 60 if overnight else 0
+        return round(duration / 60, 2)
     except (IndexError, ValueError):
         return 0.0
 
@@ -170,7 +197,13 @@ def _today_end(data: dict) -> datetime | None:
         return None
     end_dt   = _hhmm_to_datetime(shift.get("end_time"))
     start_dt = _hhmm_to_datetime(shift.get("start_time"))
-    if end_dt and start_dt and end_dt < start_dt:
+    overnight = shift.get("overnight")
+    if overnight is None:
+        code = shift.get("code")
+        canon = _shift_index(data).get(code) if code else None
+        if canon:
+            overnight = canon.get("overnight")
+    if end_dt and start_dt and (end_dt < start_dt or (end_dt == start_dt and overnight)):
         end_dt += timedelta(days=1)   # overnight shift
     return end_dt
 
@@ -263,8 +296,9 @@ def _week_hours(data: dict) -> float | None:
     sw = data.get(DATA_SCHEDULE_WEEK)
     if sw is None:
         return None
+    index = _shift_index(data)
     days = _get_day_list(sw)
-    total = sum(_day_hours(d) for d in days if _day_is_working(d))
+    total = sum(_day_hours(d, index) for d in days if _day_is_working(d))
     return round(total, 2) if total else None
 
 
@@ -327,8 +361,9 @@ def _year_total_hours(data: dict) -> float | None:
                     return round(float(val), 2)
                 except (TypeError, ValueError):
                     pass
+    index = _shift_index(data)
     days = _get_day_list(sy)
-    total = sum(_day_hours(d) for d in days if _day_is_working(d))
+    total = sum(_day_hours(d, index) for d in days if _day_is_working(d))
     return round(total, 2) if total else None
 
 

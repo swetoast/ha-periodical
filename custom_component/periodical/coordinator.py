@@ -24,6 +24,7 @@ from .const import (
     DATA_PAY_MONTH,
     DATA_SCHEDULE_MONTH,
     DATA_SCHEDULE_TODAY,
+    DATA_SHIFTS,
     DATA_SCHEDULE_WEEK,
     DATA_SCHEDULE_YEAR,
     DATA_STATUS,
@@ -61,6 +62,7 @@ REFRESH_TIERS: dict[str, timedelta] = {
     DATA_ME: REFRESH_DAILY,
     DATA_SCHEDULE_YEAR: REFRESH_DAILY,
     DATA_PAY_MONTH: REFRESH_DAILY,
+    DATA_SHIFTS: REFRESH_DAILY,
 }
 
 
@@ -154,6 +156,8 @@ class PeriodicalCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             fetch_tasks.append((DATA_SCHEDULE_YEAR, self.api.get_schedule_year(uid)))
         if self._should_refresh(DATA_PAY_MONTH):
             fetch_tasks.append((DATA_PAY_MONTH, self.api.get_pay_month(uid)))
+        if self._should_refresh(DATA_SHIFTS):
+            fetch_tasks.append((DATA_SHIFTS, self.api.get_shifts()))
 
         # Log what we're fetching
         fetching_keys = [key for key, _ in fetch_tasks]
