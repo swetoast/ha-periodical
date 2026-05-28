@@ -1,5 +1,5 @@
 /**
- * periodical-card.js  v3.0
+ * periodical-card.js  v3.1
  * Custom Lovelace card for the Periodical Home Assistant integration.
  *
  * Install : copy to <config>/www/periodical-card.js
@@ -110,14 +110,18 @@ function toLocalMins(str) {
   return +m[1] * 60 + +m[2];
 }
 
-function shiftProgress(startStr, endStr) {
+function shiftProgress(startStr, endStr, overnightFlag = null) {
   const now = new Date();
   const nowMins   = now.getHours() * 60 + now.getMinutes();
   const startMins = toLocalMins(startStr);
   const endMins   = toLocalMins(endStr);
   if (startMins === null || endMins === null) return null;
 
-  const overnight = endMins <= startMins; // e.g. 22:00 -> 06:30
+  // Prefer the authoritative `overnight` flag when the integration exposes it;
+  // otherwise infer it (end at or before start means it wraps past midnight).
+  const overnight = (overnightFlag === true || overnightFlag === false)
+    ? overnightFlag
+    : endMins <= startMins; // e.g. 22:00 -> 06:30, or on-call 00:00 -> 00:00
 
   let elapsed, duration;
   if (!overnight) {
@@ -296,7 +300,11 @@ class PeriodicalCard extends HTMLElement {
 
   static getStubConfig() { return {}; }
   setConfig(c) { this._config = c || {}; this._render(); }
-  set hass(h)  { this._hass = h; this._render(); }
+  set hass(h)  {
+    const old = this._hass;
+    this._hass = h;
+    if (this._shouldRender(old, h)) this._render();
+  }
   getCardSize() { return 7; }
   connectedCallback()    { this._timer = setInterval(() => this._render(), 60_000); }
   disconnectedCallback() { clearInterval(this._timer); }
@@ -307,6 +315,41 @@ class PeriodicalCard extends HTMLElement {
   _val(k)   { const s=this._state(k); if(!s) return null; return (s.state==='unknown'||s.state==='unavailable')?null:s.state; }
   _num(k)   { const v=parseFloat(this._val(k)); return isNaN(v)?null:v; }
   _attr(k,a){ return this._state(k)?.attributes?.[a]??null; }
+
+  /** All entity_ids this card depends on (for change detection). */
+  _relevantEids() {
+    if (!this._prefix()) return [];
+    const ids = [];
+    for (const k of Object.keys(ENTITY_MAP)) { const e = this._eid(k); if (e) ids.push(e); }
+    return ids;
+  }
+
+  /** Only re-render when one of our entities actually changed.  HA reuses the
+   *  same state object reference when an entity is unchanged, so a reference
+   *  compare is enough — this avoids rebuilding the DOM on every global tick
+   *  and lets CSS transitions (e.g. the progress bar) animate. */
+  _shouldRender(prev, next) {
+    if (!prev || !next) return true;
+    const ids = this._relevantEids();
+    if (ids.length === 0) return true;
+    return ids.some(id => prev.states[id] !== next.states[id]);
+  }
+
+  /** Resolve the display title: explicit config name, else the device (user)
+   *  name from the registry, else a humanized entity prefix. */
+  _userName() {
+    if (this._config.name) return this._config.name;
+    const h = this._hass;
+    try {
+      const eid = this._eid('working_today');
+      const ent = eid ? h?.entities?.[eid] : null;
+      const dev = ent?.device_id ? h?.devices?.[ent.device_id] : null;
+      const dn = dev?.name_by_user || dev?.name;
+      if (dn) return dn;
+    } catch (e) { /* registry not available in this HA version */ }
+    const p = this._prefix();
+    return p ? p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Periodical';
+  }
 
   _render() {
     const shadow = this.shadowRoot;
@@ -321,8 +364,7 @@ class PeriodicalCard extends HTMLElement {
     // ── Data ─────────────────────────────────────────────────────────────────
     const isWorking   = this._val('working_today') === 'on';
     const isAbsent    = this._val('absent_today')  === 'on';
-    // Keep display name generic by default. Use `name:` in card config if you want a custom title.
-    const title = this._config.name || 'User';
+    const title = this._userName();
     const rotWeek     = this._val('rotation_week');
 
     const shiftStart  = this._val('shift_start');
@@ -334,7 +376,8 @@ class PeriodicalCard extends HTMLElement {
     // time and never have UTC offset confusion like the ISO sensor state does.
     const progressStart = this._attr('shift_start','start_time') || shiftStart;
     const progressEnd   = this._attr('shift_start','end_time')   || shiftEnd;
-    const pct           = isWorking ? shiftProgress(progressStart, progressEnd) : null;
+    const shiftOvernight = this._attr('shift_start','overnight');
+    const pct           = isWorking ? shiftProgress(progressStart, progressEnd, shiftOvernight) : null;
 
     const coworkersRaw = this._attr('coworkers_today','co_workers') ?? [];
     const coworkers    = Array.isArray(coworkersRaw) ? coworkersRaw : [];
@@ -516,11 +559,11 @@ class PeriodicalCard extends HTMLElement {
             ${payNetto!==null?`
               <div>
                 <div class="pay-big">${fmtSEK(payNetto)}</div>
-                <div class="pay-sub">${payGross!==null?`${fmtSEK(payGross)} Netto`:''}</div>
+                <div class="pay-sub">Net${payGross!==null?` · ${fmtSEK(payGross)} gross`:''}</div>
               </div>` : payGross!==null?`
               <div>
                 <div class="pay-big">${fmtSEK(payGross)}</div>
-                <div class="pay-sub">Netto</div>
+                <div class="pay-sub">Gross</div>
               </div>`:``}
             <div>
               ${payHours!==null?`<div class="pay-big">${payHours}<span class="kv-unit">h</span></div><div class="pay-sub">${payShifts!==null?`${payShifts} shifts`:'Hours worked'}</div>`:''}
