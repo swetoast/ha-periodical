@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Callable
-import time as _time_mod
+from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -47,22 +47,16 @@ class PeriodicalSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], Any]
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
-def _local_tz() -> timezone:
-    """Return the local UTC offset as a fixed-offset timezone."""
-    offset_sec = -(_time_mod.altzone if _time_mod.daylight else _time_mod.timezone)
-    return timezone(timedelta(seconds=offset_sec))
-
-
 def _hhmm_to_datetime(val: str | None, base_date: date | None = None) -> datetime | None:
-    """Convert 'HH:MM' to a tz-aware datetime.  base_date defaults to today."""
+    """Convert 'HH:MM' to a tz-aware datetime in HA's local zone (DST-correct)."""
     if not val:
         return None
     parts = val.split(":")
     try:
         h, m = int(parts[0]), int(parts[1])
         t = time(h, m)
-        d = base_date or date.today()
-        return datetime.combine(d, t, tzinfo=_local_tz())
+        d = base_date or dt_util.now().date()
+        return datetime.combine(d, t, tzinfo=dt_util.DEFAULT_TIME_ZONE)
     except (IndexError, ValueError, TypeError):
         return None
 

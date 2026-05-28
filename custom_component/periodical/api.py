@@ -442,6 +442,10 @@ class PeriodicalApi:
         """GET /users — all active users."""
         return await self._get("/users")
 
+    async def get_shifts(self) -> list[dict[str, Any]]:
+        """GET /shifts — all shift type definitions (code, label, times, color)."""
+        return await self._get("/shifts")
+
     async def get_user_status(self, user_id: int) -> dict[str, Any]:
         """GET /users/{user_id}/status — today's status."""
         return await self._get(f"/users/{user_id}/status")

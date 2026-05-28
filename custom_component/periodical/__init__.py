@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .coordinator import PeriodicalCoordinator
+from .services import async_register_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +21,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    # Register services once (async_setup_entry runs per config entry).
+    if not hass.services.has_service(DOMAIN, "get_schedule_date"):
+        async_register_services(hass)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
