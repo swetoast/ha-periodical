@@ -3,24 +3,26 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
 from typing import Any, Callable
 
 from homeassistant.components.binary_sensor import (
+    ENTITY_ID_FORMAT,
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_USER_ID,
     CONF_USER_NAME,
     DATA_ABSENCES,
+    DATA_ME,
     DATA_API_HEALTH,
     DATA_SCHEDULE_TODAY,
     DATA_STATUS,
@@ -39,6 +41,15 @@ class PeriodicalBinarySensorDescription(BinarySensorEntityDescription):
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
+def _account_active(data: dict[str, Any]) -> bool | None:
+    """/me is_active flag — whether the authenticated account is active."""
+    me = data.get(DATA_ME)
+    if not isinstance(me, dict):
+        return None
+    val = me.get("is_active")
+    return bool(val) if val is not None else None
+
+
 def _is_working_today(data: dict[str, Any]) -> bool | None:
     status_data = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY)
 
@@ -55,29 +66,8 @@ def _is_working_today(data: dict[str, Any]) -> bool | None:
     return bool(isinstance(shift, dict) and shift.get("start_time"))
 
 
-def _working_today_attrs(data: dict[str, Any]) -> dict[str, Any]:
-    st = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY) or {}
-
-    attrs: dict[str, Any] = {
-        "status": st.get("status"),
-        "rotation_week": st.get("rotation_week"),
-        "ob_total": st.get("ob_total"),
-    }
-
-    shift = st.get("shift")
-
-    if isinstance(shift, dict):
-        attrs["shift_code"] = shift.get("code")
-        attrs["shift_label"] = shift.get("label")
-        attrs["shift_color"] = shift.get("color")
-        attrs["start_time"] = shift.get("start_time")
-        attrs["end_time"] = shift.get("end_time")
-
-    return {key: value for key, value in attrs.items() if value is not None}
-
-
 def _has_absence_today(data: dict[str, Any]) -> bool | None:
-    today_str = date.today().isoformat()
+    today_str = dt_util.now().date().isoformat()
     absences = data.get(DATA_ABSENCES)
 
     if absences is None:
@@ -128,31 +118,16 @@ def _api_health_attrs(data: dict[str, Any]) -> dict[str, Any]:
 
     api = health.get("api") if isinstance(health.get("api"), dict) else {}
 
+    # Operational status only.  Granular counters (request/retry/dns/timeout
+    # totals, error paths, backoff timers) belong in a diagnostics download,
+    # not in live per-tick state attributes.
     attrs: dict[str, Any] = {
         "connected": health.get("connected"),
         "partial_failure": health.get("partial_failure"),
         "using_stale_data": health.get("using_stale_data"),
         "failed_endpoints": health.get("failed_endpoints"),
-        "stale_keys": health.get("stale_keys"),
-        "success_count": health.get("success_count"),
-        "failure_count": health.get("failure_count"),
-        "last_update_success": health.get("last_update_success"),
         "last_error": health.get("last_error"),
-        "api_base_url": api.get("base_url"),
         "api_circuit_open": api.get("circuit_open"),
-        "api_circuit_open_seconds": api.get("circuit_open_seconds"),
-        "api_network_backoff_seconds": api.get("network_backoff_seconds"),
-        "api_last_success": api.get("last_success"),
-        "api_last_error_time": api.get("last_error_time"),
-        "api_last_error": api.get("last_error"),
-        "api_last_error_path": api.get("last_error_path"),
-        "api_last_http_status": api.get("last_http_status"),
-        "api_total_requests": api.get("total_requests"),
-        "api_total_failures": api.get("total_failures"),
-        "api_total_retries": api.get("total_retries"),
-        "api_dns_failures": api.get("dns_failures"),
-        "api_timeout_failures": api.get("timeout_failures"),
-        "api_connection_failures": api.get("connection_failures"),
     }
 
     return {key: value for key, value in attrs.items() if value is not None}
@@ -166,7 +141,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
         icon="mdi:briefcase-check",
         device_class=BinarySensorDeviceClass.OCCUPANCY,
         is_on_fn=_is_working_today,
-        attr_fn=_working_today_attrs,
+        attr_fn=None,
     ),
     PeriodicalBinarySensorDescription(
         key="absent_today",
@@ -186,6 +161,15 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         is_on_fn=_api_problem,
         attr_fn=_api_health_attrs,
+    ),
+    PeriodicalBinarySensorDescription(
+        key="account_active",
+        name="Account Active",
+        icon="mdi:account-check",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        is_on_fn=_account_active,
+        attr_fn=None,
     ),
 )
 
@@ -224,6 +208,10 @@ class PeriodicalBinarySensor(CoordinatorEntity[PeriodicalCoordinator], BinarySen
         user_id = entry.data[CONF_USER_ID]
 
         self._attr_unique_id = f"{DOMAIN}_{user_id}_{description.key}"
+        # Integration-prefixed entity_id (binary_sensor.periodical_<key>).
+        self.entity_id = async_generate_entity_id(
+            ENTITY_ID_FORMAT, f"{DOMAIN}_{description.key}", hass=coordinator.hass
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, str(user_id))},
             name=user_name,

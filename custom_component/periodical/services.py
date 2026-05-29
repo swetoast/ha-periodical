@@ -127,3 +127,16 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_GET_SCHEDULE_RANGE, _handle_schedule_range, schema=SCHEMA_RANGE)
     hass.services.async_register(DOMAIN, SERVICE_GET_PAY_MONTH, _handle_pay_month, schema=SCHEMA_PAY_MONTH)
     hass.services.async_register(DOMAIN, SERVICE_GET_VACATION_BALANCE, _handle_vacation_balance, schema=SCHEMA_VACATION_YEAR)
+
+
+def async_unregister_services(hass: HomeAssistant) -> None:
+    """Remove Periodical services (called when the last config entry unloads)."""
+    for service in (
+        SERVICE_GET_SCHEDULE_DATE,
+        SERVICE_GET_SCHEDULE_WEEK,
+        SERVICE_GET_SCHEDULE_RANGE,
+        SERVICE_GET_PAY_MONTH,
+        SERVICE_GET_VACATION_BALANCE,
+    ):
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)

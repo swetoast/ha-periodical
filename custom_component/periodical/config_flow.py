@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
@@ -65,11 +64,16 @@ class PeriodicalConfigFlow(ConfigFlow, domain=DOMAIN):
                     or f"User {user_id}"
                 )
 
-                if not user_id:
-                    _LOGGER.error("/me response did not contain a user id: %s", me)
+                try:
+                    user_id_int = int(user_id) if user_id is not None else None
+                except (TypeError, ValueError):
+                    user_id_int = None
+
+                if not user_id_int:
+                    _LOGGER.error("/me response had no usable integer user id: %s", me)
                     errors["base"] = "no_user_id"
                 else:
-                    await self.async_set_unique_id(f"{DOMAIN}_{base_url}_{user_id}")
+                    await self.async_set_unique_id(f"{DOMAIN}_{base_url}_{user_id_int}")
                     self._abort_if_unique_id_configured()
 
                     return self.async_create_entry(
@@ -77,7 +81,7 @@ class PeriodicalConfigFlow(ConfigFlow, domain=DOMAIN):
                         data={
                             CONF_API_KEY: api_key,
                             CONF_BASE_URL: base_url,
-                            CONF_USER_ID: int(user_id),
+                            CONF_USER_ID: user_id_int,
                             CONF_USER_NAME: str(user_name),
                         },
                     )

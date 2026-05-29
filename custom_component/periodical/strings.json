@@ -26,6 +26,9 @@
   },
   "entity": {
     "sensor": {
+      "account": {
+        "name": "Account"
+      },
       "shift_start_today": {
         "name": "Shift Start Today"
       },

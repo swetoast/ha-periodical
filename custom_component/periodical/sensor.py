@@ -8,6 +8,7 @@ from typing import Any, Callable
 from homeassistant.util import dt as dt_util
 
 from homeassistant.components.sensor import (
+    ENTITY_ID_FORMAT,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -15,15 +16,16 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import async_generate_entity_id
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_USER_ID,
     CONF_USER_NAME,
     DATA_ABSENCES,
-    DATA_ME,
+    DATA_ME,  # /me payload — surfaced by the Account sensor (see _me_name/_me_attrs)
     DATA_NEXT_SHIFT,
     DATA_NEXT_SHIFT_TOMORROW,
     DATA_PAY_MONTH,
@@ -177,35 +179,62 @@ def _day_hours(day: dict, index: dict[str, dict] | None = None) -> float:
     except (IndexError, ValueError):
         return 0.0
 
-def _get_today_shift(data: dict) -> dict | None:
+def _active_shift_and_date(data: dict) -> tuple[dict, date | None] | tuple[None, None]:
+    """Return today's relevant shift and the calendar date its start belongs to.
+
+    When a shift from the previous day is still running past midnight, /status
+    reports it under `currently_active_shift` with its original start `date`
+    (e.g. at 02:00 on the 30th, the N3 that began 22:00 on the 29th).  Preferring
+    that anchors the start/end timestamps to the correct days instead of assuming
+    both fall on "today".  Otherwise we use the plain shift on status/today, dated
+    by that response's own `date` field (falling back to HA-local today).
+    """
+    status = data.get(DATA_STATUS)
+    if isinstance(status, dict):
+        active = status.get("currently_active_shift")
+        if isinstance(active, dict):
+            shift = active.get("shift")
+            if isinstance(shift, dict) and shift.get("start_time"):
+                return shift, _parse_iso_date(active.get("date"))
+
     for key in (DATA_STATUS, DATA_SCHEDULE_TODAY):
         day = data.get(key)
         if isinstance(day, dict):
             shift = day.get("shift")
             if isinstance(shift, dict) and shift.get("start_time"):
-                return shift
-    return None
+                return shift, _parse_iso_date(day.get("date"))
+    return None, None
+
+
+def _get_today_shift(data: dict) -> dict | None:
+    """The shift dict relevant right now (active overnight shift takes priority)."""
+    shift, _ = _active_shift_and_date(data)
+    return shift
 
 
 def _today_start(data: dict) -> datetime | None:
-    shift = _get_today_shift(data)
-    return _hhmm_to_datetime(shift.get("start_time") if shift else None)
+    shift, base = _active_shift_and_date(data)
+    if not shift:
+        return None
+    return _hhmm_to_datetime(shift.get("start_time"), base)
 
 
 def _today_end(data: dict) -> datetime | None:
-    shift = _get_today_shift(data)
+    shift, base = _active_shift_and_date(data)
     if not shift:
         return None
-    end_dt   = _hhmm_to_datetime(shift.get("end_time"))
-    start_dt = _hhmm_to_datetime(shift.get("start_time"))
+    start_dt = _hhmm_to_datetime(shift.get("start_time"), base)
+    end_dt   = _hhmm_to_datetime(shift.get("end_time"), base)
     overnight = shift.get("overnight")
     if overnight is None:
         code = shift.get("code")
         canon = _shift_index(data).get(code) if code else None
         if canon:
             overnight = canon.get("overnight")
+    # End rolls to the next day when the clock wraps past midnight, or when start
+    # and end are equal but the shift is flagged overnight (e.g. on-call 00:00->00:00).
     if end_dt and start_dt and (end_dt < start_dt or (end_dt == start_dt and overnight)):
-        end_dt += timedelta(days=1)   # overnight shift
+        end_dt += timedelta(days=1)
     return end_dt
 
 
@@ -273,17 +302,9 @@ def _rotation_week(data: dict) -> int | None:
 
 
 def _status_attrs(data: dict) -> dict[str, Any]:
+    """Only fields without a dedicated sensor; shift detail lives on shift_start_today."""
     st = data.get(DATA_STATUS) or {}
-    attrs: dict[str, Any] = {}
-    for k in ("status", "rotation_week", "overtime", "partial_day", "ob_pay", "ob_total"):
-        if k in st:
-            attrs[k] = st[k]
-    shift = st.get("shift")
-    if isinstance(shift, dict):
-        attrs["shift_code"]  = shift.get("code")
-        attrs["shift_label"] = shift.get("label")
-        attrs["shift_color"] = shift.get("color")
-    return attrs
+    return {k: st[k] for k in ("overtime", "partial_day") if k in st}
 
 
 def _week_shifts_count(data: dict) -> int | None:
@@ -343,7 +364,7 @@ def _year_remaining_shifts(data: dict) -> int | None:
     sy = data.get(DATA_SCHEDULE_YEAR)
     if sy is None:
         return None
-    today_str = date.today().isoformat()
+    today_str = dt_util.now().date().isoformat()
     days = _get_day_list(sy)
     return sum(
         1 for d in days
@@ -367,16 +388,6 @@ def _year_total_hours(data: dict) -> float | None:
     days = _get_day_list(sy)
     total = sum(_day_hours(d, index) for d in days if _day_is_working(d))
     return round(total, 2) if total else None
-
-
-def _year_attrs(data: dict) -> dict[str, Any]:
-    sy = data.get(DATA_SCHEDULE_YEAR)
-    if not isinstance(sy, dict):
-        return {}
-    return {
-        k: v for k, v in sy.items()
-        if k in ("year", "total_hours", "total_shifts", "num_shifts")
-    }
 
 
 def _next_shift_date(data: dict) -> date | None:
@@ -417,32 +428,43 @@ def _tomorrow_shift_attrs(data: dict) -> dict[str, Any]:
     return _shift_attrs_from_ns(data.get(DATA_NEXT_SHIFT_TOMORROW) or {})
 
 
+# Vacation field names confirmed via /vacation/balance:
+#   remaining_days, used_days, entitled_days, total_available (= entitled + saved),
+#   saved_from_previous, year_start, year_end, projection{...}.
 def _vacation_remaining(data: dict) -> float | None:
     vb = data.get(DATA_VACATION_BALANCE)
-    if not vb:
-        return None
-    return (
-        vb.get("remaining") or vb.get("remaining_days")
-        or vb.get("balance") or vb.get("days_remaining")
-    )
+    return vb.get("remaining_days") if isinstance(vb, dict) else None
 
 
 def _vacation_used(data: dict) -> float | None:
     vb = data.get(DATA_VACATION_BALANCE)
-    if not vb:
-        return None
-    return vb.get("used") or vb.get("used_days") or vb.get("days_used")
+    return vb.get("used_days") if isinstance(vb, dict) else None
 
 
 def _vacation_total(data: dict) -> float | None:
+    # total_available includes days saved from the previous year; fall back to the
+    # base entitlement if the API ever omits it.
     vb = data.get(DATA_VACATION_BALANCE)
-    if not vb:
+    if not isinstance(vb, dict):
         return None
-    return vb.get("total") or vb.get("total_days") or vb.get("entitled_days")
+    return vb.get("total_available") or vb.get("entitled_days")
 
 
 def _vacation_attrs(data: dict) -> dict[str, Any]:
-    return {k: v for k, v in (data.get(DATA_VACATION_BALANCE) or {}).items()}
+    """Non-duplicated extras: the vacation-year window and the payout projection.
+
+    remaining/used/total each have their own sensor, so they are intentionally
+    left out here to avoid repeating sensor values as attributes.
+    """
+    vb = data.get(DATA_VACATION_BALANCE)
+    if not isinstance(vb, dict):
+        return {}
+    keep = (
+        "year", "year_start", "year_end",
+        "entitled_days", "saved_from_previous",
+        "is_first_year", "projection",
+    )
+    return {k: vb[k] for k in keep if k in vb and vb[k] is not None}
 
 
 def _pay_float(data: dict, *keys: str) -> float | None:
@@ -474,19 +496,19 @@ def _pay_int(data: dict, *keys: str) -> int | None:
 
 
 def _pay_brutto(data: dict) -> float | None:
-    return _pay_float(data, "brutto_pay", "gross_pay", "total_pay", "gross", "total", "amount")
+    return _pay_float(data, "brutto_pay")
 
 
 def _pay_netto(data: dict) -> float | None:
-    return _pay_float(data, "netto_pay", "net_pay", "netto")
+    return _pay_float(data, "netto_pay")
 
 
 def _pay_hours(data: dict) -> float | None:
-    return _pay_float(data, "total_hours", "hours", "worked_hours")
+    return _pay_float(data, "total_hours")
 
 
 def _pay_shifts(data: dict) -> int | None:
-    return _pay_int(data, "num_shifts", "shifts")
+    return _pay_int(data, "num_shifts")
 
 
 def _pay_oncall(data: dict) -> float | None:
@@ -498,7 +520,7 @@ def _pay_oncall_hours(data: dict) -> float | None:
 
 
 def _pay_overtime(data: dict) -> float | None:
-    return _pay_float(data, "ot_pay", "overtime_pay")
+    return _pay_float(data, "ot_pay")
 
 
 def _pay_sick_days(data: dict) -> int | None:
@@ -519,16 +541,15 @@ def _pay_leave_days(data: dict) -> int | None:
 
 def _pay_attrs(data: dict) -> dict[str, Any]:
     pm = data.get(DATA_PAY_MONTH) or {}
+    # Real /pay/month keys that have no dedicated sensor. (gross/netto/hours/
+    # shifts/oncall/ot/sick_days/sick_hours/vab_days/leave_days each have one.)
+    # ob_pay and ob_hours are per-OB-code dicts (e.g. {"OB1": .., "OB2": ..}).
     keep = (
-        "year", "month", "total_hours", "num_shifts",
+        "year", "month",
         "ob_pay", "ob_hours",
-        "oncall_pay", "oncall_hours",
-        "ot_pay",
         "absence_deduction", "absence_hours",
-        "sick_days", "sick_hours",
-        "vab_days", "vab_hours",
-        "leave_days", "leave_hours",
-        "brutto_pay", "netto_pay",
+        "vab_hours", "leave_hours",
+        "parental_days", "parental_hours",
     )
     return {k: pm[k] for k in keep if k in pm}
 
@@ -572,8 +593,64 @@ def _schedule_month_attrs(data: dict) -> dict[str, Any]:
         if k in ("month", "year", "total_hours", "working_days", "days_off", "num_shifts")
     }
 
+# ---------------------------------------------------------------------------
+# Account (/me)
+#
+# /me is the endpoint that identifies the authenticated user.  At config-flow
+# time it is called once to discover the numeric user id, which is then stored
+# on the config entry and used to build every other /users/{id}/... request.
+# The coordinator also refreshes /me on the daily tier; the Account sensor below
+# consumes that payload so the fetch is surfaced (name as state, profile fields
+# as attributes) instead of being discarded.
+# ---------------------------------------------------------------------------
+def _me_name(data: dict) -> str | None:
+    """Display name for the authenticated account, probed from the /me payload."""
+    me = data.get(DATA_ME)
+    if not isinstance(me, dict):
+        return None
+    # Same field precedence the config flow uses to resolve a human-readable name.
+    name = (
+        me.get("name")
+        or me.get("full_name")
+        or me.get("username")
+        or me.get("email")
+    )
+    if name:
+        return str(name)
+    uid = me.get("id") or me.get("user_id") or me.get("userId")
+    return f"User {uid}" if uid is not None else None
+
+
+def _me_attrs(data: dict) -> dict[str, Any]:
+    """Pass through scalar fields from /me (id, email, role, …) as attributes.
+
+    The /me schema is not published, so rather than hard-code field names we
+    expose every top-level scalar value as-is; nested objects/lists are skipped
+    to keep the attribute set flat and state-machine friendly.
+    """
+    me = data.get(DATA_ME)
+    if not isinstance(me, dict):
+        return {}
+    return {
+        k: v
+        for k, v in me.items()
+        if isinstance(v, (str, int, float, bool)) and v is not None
+    }
+
+
 SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
 
+    # Account identity from /me.  Diagnostic: it rarely changes and is mainly a
+    # human-readable label / holder for profile attributes, not a primary metric.
+    PeriodicalSensorDescription(
+        key="account",
+        translation_key="account",
+        name="Account",
+        icon="mdi:account",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_me_name,
+        attr_fn=_me_attrs,
+    ),
     PeriodicalSensorDescription(
         key="shift_start_today",
         translation_key="shift_start_today",
@@ -590,7 +667,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         icon="mdi:clock-end",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=_today_end,
-        attr_fn=_today_shift_attrs,
+        attr_fn=None,
     ),
     PeriodicalSensorDescription(
         key="coworkers_today",
@@ -619,7 +696,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         native_unit_of_measurement="SEK",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_ob_total,
-        attr_fn=_status_attrs,
+        attr_fn=None,
     ),
     PeriodicalSensorDescription(
         key="rotation_week",
@@ -671,7 +748,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         native_unit_of_measurement="shifts",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_year_total_shifts,
-        attr_fn=_year_attrs,
+        attr_fn=None,
     ),
     PeriodicalSensorDescription(
         key="shifts_remaining_year",
@@ -692,7 +769,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         native_unit_of_measurement="h",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=_year_total_hours,
-        attr_fn=_year_attrs,
+        attr_fn=None,
     ),
 
     PeriodicalSensorDescription(
@@ -711,7 +788,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         name="Next Shift Start",
         icon="mdi:clock-start",
         value_fn=_next_shift_start,
-        attr_fn=_next_shift_attrs,
+        attr_fn=None,
     ),
     
     PeriodicalSensorDescription(
@@ -739,7 +816,7 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
         name="Tomorrow Shift Start",
         icon="mdi:clock-start",
         value_fn=_tomorrow_shift_start,
-        attr_fn=_tomorrow_shift_attrs,
+        attr_fn=None,
     ),
     PeriodicalSensorDescription(
         key="tomorrow_shift_end",
@@ -913,6 +990,219 @@ SENSOR_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# 1:1 field coverage
+#
+# The curated sensors above cover the primary metrics.  The block below adds a
+# dedicated sensor for every *remaining* field the API actually returns, so the
+# integration exposes the payloads one-to-one.  These are generated rather than
+# hand-written to keep them in lockstep with the real schema (confirmed from
+# live /pay/month, /vacation/balance and /me responses).
+#
+# Generated sensors use an explicit `name` (no translation_key) so they need no
+# strings.json entry; with has_entity_name the UI shows "<user> <name>".
+#
+# Per-code OB dicts (ob_pay / ob_hours / sick_ob_pay_by_code / sick_ob_hours_by_code,
+# each shaped like {"OB1": .., ... "OB5": ..}) are broken out into one sensor per
+# OB code, over the fixed OB1-OB5 set the payroll uses.  If a new OB code is ever
+# introduced, add it to OB_CODES below and a matching set of sensors is generated.
+# ---------------------------------------------------------------------------
+OB_CODES = ("OB1", "OB2", "OB3", "OB4", "OB5")
+
+
+def _pay_ob(data: dict, field: str, code: str) -> float | None:
+    """One OB-code value out of the pay/month ob_pay or ob_hours dict."""
+    pm = data.get(DATA_PAY_MONTH)
+    if not isinstance(pm, dict):
+        return None
+    bucket = pm.get(field)
+    if not isinstance(bucket, dict):
+        return None
+    val = bucket.get(code)
+    try:
+        return round(float(val), 2) if val is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _vac_field(data: dict, key: str) -> Any:
+    vb = data.get(DATA_VACATION_BALANCE)
+    return vb.get(key) if isinstance(vb, dict) else None
+
+
+def _vac_proj(data: dict, key: str) -> Any:
+    vb = data.get(DATA_VACATION_BALANCE)
+    if not isinstance(vb, dict):
+        return None
+    proj = vb.get("projection")
+    return proj.get(key) if isinstance(proj, dict) else None
+
+
+def _me_field(data: dict, key: str) -> Any:
+    me = data.get(DATA_ME)
+    return me.get(key) if isinstance(me, dict) else None
+
+
+def _build_field_descriptions() -> list[PeriodicalSensorDescription]:
+    """Granular field sensors are intentionally NOT generated.
+
+    Every field these used to expose (per-OB-code pay/hours, sick-OB by code,
+    absence/parental/leave/vab hours, the full vacation projection, /me profile
+    fields) is now carried as attributes on the compound summary sensors below
+    (Monthly OB, Monthly Sick OB, Monthly Absence, Vacation) and on the Account
+    sensor — collapsing ~40 individual entities into a handful of rich ones.
+
+    Kept as an empty hook so the call site and any future opt-in stays simple.
+    """
+    return []
+
+
+SENSOR_DESCRIPTIONS = SENSOR_DESCRIPTIONS + tuple(_build_field_descriptions())
+
+
+# ---------------------------------------------------------------------------
+# Compound (summary) sensors
+#
+# These collapse a whole family of fields into a single enabled-by-default
+# sensor: the state is the headline number, the rest ride along as attributes.
+# They summarize each family into one headline sensor for convenient dashboards;
+# the granular per-field sensors above remain available alongside them.
+#
+# Note: attributes are not recorded in history — use the granular per-field
+# sensors for long-term graphing/alerting on a specific value.
+# ---------------------------------------------------------------------------
+def _sum_dict(data: dict, field: str) -> float | None:
+    pm = data.get(DATA_PAY_MONTH)
+    if not isinstance(pm, dict) or not isinstance(pm.get(field), dict):
+        return None
+    total = 0.0
+    for v in pm[field].values():
+        try:
+            total += float(v)
+        except (TypeError, ValueError):
+            pass
+    return round(total, 2)
+
+
+def _ob_compound_attrs(data: dict) -> dict[str, Any]:
+    pm = data.get(DATA_PAY_MONTH)
+    if not isinstance(pm, dict):
+        return {}
+    attrs: dict[str, Any] = {"total_hours": _sum_dict(data, "ob_hours")}
+    for code in OB_CODES:
+        attrs[f"{code.lower()}_pay"] = _pay_ob(data, "ob_pay", code)
+        attrs[f"{code.lower()}_hours"] = _pay_ob(data, "ob_hours", code)
+    return {k: v for k, v in attrs.items() if v is not None}
+
+
+def _sick_ob_compound_attrs(data: dict) -> dict[str, Any]:
+    pm = data.get(DATA_PAY_MONTH)
+    if not isinstance(pm, dict):
+        return {}
+    attrs: dict[str, Any] = {
+        "lost": _pay_float(data, "sick_ob_lost"),
+        "total_hours": _sum_dict(data, "sick_ob_hours_by_code"),
+    }
+    for code in OB_CODES:
+        attrs[f"{code.lower()}_pay"] = _pay_ob(data, "sick_ob_pay_by_code", code)
+        attrs[f"{code.lower()}_hours"] = _pay_ob(data, "sick_ob_hours_by_code", code)
+    return {k: v for k, v in attrs.items() if v is not None}
+
+
+def _absence_compound_attrs(data: dict) -> dict[str, Any]:
+    pm = data.get(DATA_PAY_MONTH)
+    if not isinstance(pm, dict):
+        return {}
+    keys = (
+        "absence_hours", "sick_days", "sick_hours", "vab_days", "vab_hours",
+        "leave_days", "leave_hours", "parental_days", "parental_hours",
+    )
+    return {k: pm[k] for k in keys if k in pm and pm[k] is not None}
+
+
+def _pay_compound_attrs(data: dict) -> dict[str, Any]:
+    pm = data.get(DATA_PAY_MONTH)
+    if not isinstance(pm, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k in ("brutto_pay", "total_hours", "num_shifts", "oncall_pay",
+              "oncall_hours", "ot_pay", "year", "month"):
+        if pm.get(k) is not None:
+            out[k] = pm[k]
+    out["ob_total_pay"] = _sum_dict(data, "ob_pay")
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _vacation_compound_attrs(data: dict) -> dict[str, Any]:
+    vb = data.get(DATA_VACATION_BALANCE)
+    if not isinstance(vb, dict):
+        return {}
+    keys = (
+        "used_days", "total_available", "entitled_days", "saved_from_previous",
+        "year", "year_start", "year_end", "is_first_year",
+    )
+    out = {k: vb[k] for k in keys if k in vb and vb[k] is not None}
+    proj = vb.get("projection")
+    if isinstance(proj, dict):
+        out["projection"] = proj
+    return out
+
+
+COMPOUND_DESCRIPTIONS: tuple[PeriodicalSensorDescription, ...] = (
+    # Monthly net pay is the headline; gross/hours/shifts/oncall/ot ride along.
+    PeriodicalSensorDescription(
+        key="pay_summary",
+        name="Monthly Pay",
+        icon="mdi:cash-multiple",
+        native_unit_of_measurement="SEK",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _pay_float(d, "netto_pay"),
+        attr_fn=_pay_compound_attrs,
+    ),
+    # Total OB pay; per-code pay/hours in attributes.
+    PeriodicalSensorDescription(
+        key="ob_summary",
+        name="Monthly OB",
+        icon="mdi:cash-plus",
+        native_unit_of_measurement="SEK",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _sum_dict(d, "ob_pay"),
+        attr_fn=_ob_compound_attrs,
+    ),
+    # Sick-OB total; per-code sick pay/hours + lost in attributes.
+    PeriodicalSensorDescription(
+        key="sick_ob_summary",
+        name="Monthly Sick OB",
+        icon="mdi:cash",
+        native_unit_of_measurement="SEK",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _pay_float(d, "sick_total_ob"),
+        attr_fn=_sick_ob_compound_attrs,
+    ),
+    # Absence deduction is the headline; day/hour counts by type in attributes.
+    PeriodicalSensorDescription(
+        key="absence_summary",
+        name="Monthly Absence",
+        icon="mdi:cash-minus",
+        native_unit_of_measurement="SEK",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _pay_float(d, "absence_deduction"),
+        attr_fn=_absence_compound_attrs,
+    ),
+    # Vacation days remaining; used/total/entitled/year-window in attributes.
+    PeriodicalSensorDescription(
+        key="vacation_summary",
+        name="Vacation",
+        icon="mdi:beach",
+        native_unit_of_measurement="days",
+        value_fn=_vacation_remaining,
+        attr_fn=_vacation_compound_attrs,
+    ),
+)
+
+SENSOR_DESCRIPTIONS = SENSOR_DESCRIPTIONS + COMPOUND_DESCRIPTIONS
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -943,6 +1233,11 @@ class PeriodicalSensor(CoordinatorEntity[PeriodicalCoordinator], SensorEntity):
         user_name = entry.data.get(CONF_USER_NAME, "Periodical")
         user_id   = entry.data[CONF_USER_ID]
         self._attr_unique_id = f"{DOMAIN}_{user_id}_{description.key}"
+        # Force a stable, integration-prefixed entity_id (sensor.periodical_<key>)
+        # regardless of the device/user name, so all entities sort together.
+        self.entity_id = async_generate_entity_id(
+            ENTITY_ID_FORMAT, f"{DOMAIN}_{description.key}", hass=coordinator.hass
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, str(user_id))},
             name=user_name,

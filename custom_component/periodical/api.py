@@ -109,11 +109,7 @@ class PeriodicalApi:
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json, text/plain, */*",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": "ha-periodical (Home Assistant integration)",
         }
 
     @staticmethod
@@ -245,6 +241,9 @@ class PeriodicalApi:
         self._last_http_status = status
         self._network_failures.clear()
         self._circuit_open_until = 0.0
+        # Clear any lingering 429/DNS backoff so recovery is immediate, not delayed
+        # until the previously-scheduled backoff window happens to expire.
+        self._network_backoff_until = 0.0
 
     def _record_failure(
         self,

@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .coordinator import PeriodicalCoordinator
-from .services import async_register_services
+from .services import async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,4 +34,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        # Drop services once the last entry is gone so they do not linger as no-ops.
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
+            async_unregister_services(hass)
     return unload_ok
