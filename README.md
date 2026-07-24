@@ -62,12 +62,6 @@ Or do it by hand:
 4. Search for **Periodical** and select **Download**
 5. Restart Home Assistant
 
-### Manual
-
-1. Download the latest release archive from the [releases page][release-url]
-2. Copy the `periodical` folder into `config/custom_components/` on your Home Assistant instance
-3. Restart Home Assistant
-
 The result should look like this:
 
 ```text
