@@ -11,7 +11,7 @@ CONF_BASE_URL: Final = "base_url"
 CONF_USER_ID: Final = "user_id"
 CONF_USER_NAME: Final = "user_name"
 
-DEFAULT_BASE_URL: Final = "https://periodical.kakanweb.com/api/v1"
+DEFAULT_BASE_URL: Final = "https://periodical.com/api/v1"
 SCAN_INTERVAL: Final = timedelta(minutes=15)
 
 # GET /users/{id}/schedule?from_date=&to_date= rejects spans wider than this.
