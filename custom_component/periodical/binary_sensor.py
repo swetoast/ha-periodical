@@ -12,23 +12,15 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import (
-    CONF_USER_ID,
-    CONF_USER_NAME,
-    DATA_ABSENCES,
-    DATA_ME,
-    DATA_API_HEALTH,
-    DATA_SCHEDULE_TODAY,
-    DATA_STATUS,
-    DOMAIN,
-)
+from .const import DATA_ABSENCES, DATA_API_HEALTH, DATA_ME, DOMAIN
 from .coordinator import PeriodicalCoordinator
+from .entity import PeriodicalEntity, async_cleanup_registry
+from .sensor import _absence_items, _day_is_absence, _day_is_working, _day_status, _today_day
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,56 +43,65 @@ def _account_active(data: dict[str, Any]) -> bool | None:
 
 
 def _is_working_today(data: dict[str, Any]) -> bool | None:
-    status_data = data.get(DATA_STATUS) or data.get(DATA_SCHEDULE_TODAY)
-
-    if status_data is None:
-        return None
-
-    status_str = status_data.get("status") if isinstance(status_data, dict) else None
-
-    if isinstance(status_str, str):
-        return status_str.lower() == "working"
-
-    shift = status_data.get("shift") if isinstance(status_data, dict) else None
-
-    return bool(isinstance(shift, dict) and shift.get("start_time"))
+    day = _today_day(data)
+    return None if day is None else _day_is_working(day)
 
 
 def _has_absence_today(data: dict[str, Any]) -> bool | None:
-    today_str = dt_util.now().date().isoformat()
-    absences = data.get(DATA_ABSENCES)
+    """Absent today.
 
-    if absences is None:
+    The authoritative signal is the day's own status — the API marks vacation,
+    sick, VAB and leave days there while still attaching the rotation shift.
+    /absences is only consulted as a secondary source because it is empty for
+    schedule-driven absences, so relying on it alone reported "not absent"
+    throughout a booked holiday.
+    """
+    day = _today_day(data)
+    if day is not None and _day_is_absence(day):
+        return True
+
+    if day is None and data.get(DATA_ABSENCES) is None:
         return None
 
-    items: list[Any] = []
-
-    if isinstance(absences, list):
-        items = absences
-    elif isinstance(absences, dict):
-        items = absences.get("absences") or absences.get("items") or []
-
-    for absence in items:
-        if not isinstance(absence, dict):
-            continue
-
+    today = dt_util.now().date().isoformat()
+    for absence in _absence_items(data):
         start = absence.get("start_date") or absence.get("from") or absence.get("date") or ""
         end = absence.get("end_date") or absence.get("to") or start
-
-        if start <= today_str <= end:
+        if start and start <= today <= end:
             return True
 
     return False
 
 
+def _absence_attrs(data: dict[str, Any]) -> dict[str, Any]:
+    day = _today_day(data)
+    if day is None:
+        return {}
+    status = _day_status(day)
+    return {
+        "status": day.get("status"),
+        "absence_type": status if _day_is_absence(day) else None,
+        "date": day.get("date"),
+    }
+
+
+def _working_attrs(data: dict[str, Any]) -> dict[str, Any]:
+    day = _today_day(data)
+    if day is None:
+        return {}
+    shift = day.get("shift") if isinstance(day.get("shift"), dict) else {}
+    return {
+        "status": day.get("status"),
+        "scheduled_shift_code": shift.get("code"),
+        "scheduled_shift_label": shift.get("label"),
+    }
+
+
 def _api_problem(data: dict[str, Any]) -> bool | None:
     health = data.get(DATA_API_HEALTH)
-
     if not isinstance(health, dict):
         return None
-
     api = health.get("api") if isinstance(health.get("api"), dict) else {}
-
     return bool(
         not health.get("connected", False)
         or health.get("partial_failure")
@@ -112,24 +113,21 @@ def _api_problem(data: dict[str, Any]) -> bool | None:
 
 def _api_health_attrs(data: dict[str, Any]) -> dict[str, Any]:
     health = data.get(DATA_API_HEALTH)
-
     if not isinstance(health, dict):
         return {}
-
     api = health.get("api") if isinstance(health.get("api"), dict) else {}
-
     # Operational status only.  Granular counters (request/retry/dns/timeout
-    # totals, error paths, backoff timers) belong in a diagnostics download,
-    # not in live per-tick state attributes.
+    # totals, backoff timers) stay on the client for the debug log.
     attrs: dict[str, Any] = {
         "connected": health.get("connected"),
         "partial_failure": health.get("partial_failure"),
         "using_stale_data": health.get("using_stale_data"),
         "failed_endpoints": health.get("failed_endpoints"),
+        "stale_endpoints": health.get("stale_endpoints"),
         "last_error": health.get("last_error"),
         "api_circuit_open": api.get("circuit_open"),
+        "api_last_success": api.get("last_success"),
     }
-
     return {key: value for key, value in attrs.items() if value is not None}
 
 
@@ -137,25 +135,21 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
     PeriodicalBinarySensorDescription(
         key="working_today",
         translation_key="working_today",
-        name="Working Today",
         icon="mdi:briefcase-check",
         device_class=BinarySensorDeviceClass.OCCUPANCY,
         is_on_fn=_is_working_today,
-        attr_fn=None,
+        attr_fn=_working_attrs,
     ),
     PeriodicalBinarySensorDescription(
         key="absent_today",
         translation_key="absent_today",
-        name="Absent Today",
         icon="mdi:account-off",
-        device_class=BinarySensorDeviceClass.PROBLEM,
         is_on_fn=_has_absence_today,
-        attr_fn=None,
+        attr_fn=_absence_attrs,
     ),
     PeriodicalBinarySensorDescription(
         key="api_problem",
         translation_key="api_problem",
-        name="API Problem",
         icon="mdi:cloud-alert",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -164,12 +158,11 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[PeriodicalBinarySensorDescription, ...] = (
     ),
     PeriodicalBinarySensorDescription(
         key="account_active",
-        name="Account Active",
+        translation_key="account_active",
         icon="mdi:account-check",
         device_class=BinarySensorDeviceClass.RUNNING,
         entity_category=EntityCategory.DIAGNOSTIC,
         is_on_fn=_account_active,
-        attr_fn=None,
     ),
 )
 
@@ -181,18 +174,17 @@ async def async_setup_entry(
 ) -> None:
     """Set up Periodical binary sensors."""
     coordinator: PeriodicalCoordinator = hass.data[DOMAIN][entry.entry_id]
-
+    async_cleanup_registry(hass, entry, BINARY_SENSOR_DESCRIPTIONS, "binary_sensor")
     async_add_entities(
         PeriodicalBinarySensor(coordinator, entry, description)
         for description in BINARY_SENSOR_DESCRIPTIONS
     )
 
 
-class PeriodicalBinarySensor(CoordinatorEntity[PeriodicalCoordinator], BinarySensorEntity):
+class PeriodicalBinarySensor(PeriodicalEntity, BinarySensorEntity):
     """A Periodical binary sensor."""
 
     entity_description: PeriodicalBinarySensorDescription
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -200,51 +192,8 @@ class PeriodicalBinarySensor(CoordinatorEntity[PeriodicalCoordinator], BinarySen
         entry: ConfigEntry,
         description: PeriodicalBinarySensorDescription,
     ) -> None:
-        super().__init__(coordinator)
-
-        self.entity_description = description
-
-        user_name = entry.data.get(CONF_USER_NAME, "Periodical")
-        user_id = entry.data[CONF_USER_ID]
-
-        self._attr_unique_id = f"{DOMAIN}_{user_id}_{description.key}"
-        # Integration-prefixed entity_id (binary_sensor.periodical_<key>).
-        self.entity_id = async_generate_entity_id(
-            ENTITY_ID_FORMAT, f"{DOMAIN}_{description.key}", hass=coordinator.hass
-        )
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, str(user_id))},
-            name=user_name,
-            manufacturer="Periodical",
-            model="Periodical API",
-        )
+        super().__init__(coordinator, entry, description, ENTITY_ID_FORMAT)
 
     @property
     def is_on(self) -> bool | None:
-        if self.coordinator.data is None:
-            return None
-
-        try:
-            return self.entity_description.is_on_fn(self.coordinator.data)
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug(
-                "Failed to calculate binary sensor %s",
-                self.entity_description.key,
-                exc_info=True,
-            )
-            return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        if self.coordinator.data is None or self.entity_description.attr_fn is None:
-            return {}
-
-        try:
-            return self.entity_description.attr_fn(self.coordinator.data) or {}
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug(
-                "Failed to calculate attributes for %s",
-                self.entity_description.key,
-                exc_info=True,
-            )
-            return {}
+        return self._call(self.entity_description.is_on_fn, "state")
