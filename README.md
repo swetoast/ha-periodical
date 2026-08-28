@@ -79,6 +79,9 @@ config/custom_components/periodical/
 ├── services.py
 ├── services.yaml
 ├── strings.json
+├── frontend/
+│   ├── __init__.py
+│   └── periodical-card.js
 └── translations/
     └── en.json
 ```
@@ -420,6 +423,7 @@ An older install left rows in the entity registry. Remove the stale entities fro
 │       ├── binary_sensor.py  Binary sensor definitions
 │       ├── config_flow.py    Setup and re-authentication
 │       ├── services.py       Service handlers
+│       ├── frontend/          Bundled Periodical Lovelace card
 │       └── translations/
 ├── hacs.json
 └── README.md

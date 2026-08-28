@@ -1,0 +1,120 @@
+get_schedule_date:
+  name: Get schedule for date
+  description: >-
+    Fetch the schedule for a specific date. Returns the payload as a response
+    variable and also fires a periodical_schedule_date event.
+  fields:
+    config_entry_id:
+      name: Account
+      description: Limit the call to one configured Periodical account. Omit to query every account.
+      required: false
+      selector:
+        config_entry:
+          integration: periodical
+    date:
+      name: Date
+      description: The date to fetch (YYYY-MM-DD).
+      required: true
+      selector:
+        date:
+
+get_schedule_week:
+  name: Get schedule for week
+  description: >-
+    Fetch the schedule for the ISO week containing the given date. Returns the
+    payload as a response variable and also fires a periodical_schedule_week event.
+  fields:
+    config_entry_id:
+      name: Account
+      description: Limit the call to one configured Periodical account. Omit to query every account.
+      required: false
+      selector:
+        config_entry:
+          integration: periodical
+    date:
+      name: Date
+      description: Any date within the desired ISO week (YYYY-MM-DD).
+      required: true
+      selector:
+        date:
+
+get_schedule_range:
+  name: Get schedule for range
+  description: >-
+    Fetch the schedule for a date range. The API accepts at most 70 days; wider
+    ranges are rejected before the request is sent.
+  fields:
+    config_entry_id:
+      name: Account
+      description: Limit the call to one configured Periodical account. Omit to query every account.
+      required: false
+      selector:
+        config_entry:
+          integration: periodical
+    from_date:
+      name: From date
+      description: Start of the range (YYYY-MM-DD).
+      required: true
+      selector:
+        date:
+    to_date:
+      name: To date
+      description: End of the range (YYYY-MM-DD), at most 69 days after the start.
+      required: true
+      selector:
+        date:
+
+get_pay_month:
+  name: Get monthly pay
+  description: >-
+    Fetch the pay summary for a month. Returns the payload as a response
+    variable and also fires a periodical_pay_month event.
+  fields:
+    config_entry_id:
+      name: Account
+      description: Limit the call to one configured Periodical account. Omit to query every account.
+      required: false
+      selector:
+        config_entry:
+          integration: periodical
+    year:
+      name: Year
+      description: Year (defaults to the current year).
+      required: false
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
+    month:
+      name: Month
+      description: Month 1-12 (defaults to the current month).
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+
+get_vacation_balance:
+  name: Get vacation balance
+  description: >-
+    Fetch the vacation balance for a year. Returns the payload as a response
+    variable and also fires a periodical_vacation_balance event.
+  fields:
+    config_entry_id:
+      name: Account
+      description: Limit the call to one configured Periodical account. Omit to query every account.
+      required: false
+      selector:
+        config_entry:
+          integration: periodical
+    year:
+      name: Year
+      description: Year (defaults to the current year).
+      required: false
+      selector:
+        number:
+          min: 2000
+          max: 2100
+          mode: box
