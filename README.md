@@ -74,7 +74,6 @@ config/custom_components/periodical/
 ├── coordinator.py
 ├── entity.py
 ├── manifest.json
-├── schedule.py
 ├── sensor.py
 ├── services.py
 ├── services.yaml
@@ -417,19 +416,17 @@ An older install left rows in the entity registry. Remove the stale entities fro
 │   └── periodical/
 │       ├── api.py            HTTP client: retries, backoff, circuit breaker
 │       ├── coordinator.py    Tiered refresh and calendar rollover
-│       ├── schedule.py       Reading rota payloads: status, shifts, hours
 │       ├── entity.py         Shared entity identity and registry migration
 │       ├── sensor.py         Sensor definitions
 │       ├── binary_sensor.py  Binary sensor definitions
 │       ├── config_flow.py    Setup and re-authentication
 │       ├── services.py       Service handlers
-│       ├── frontend/          Bundled Periodical Lovelace card
 │       └── translations/
 ├── hacs.json
 └── README.md
 ```
 
-`schedule.py` is the single definition of what "working", "absent" and "on-call" mean. Both platforms read from it so they cannot drift apart.
+Schedule interpretation is centralized in `sensor.py`, with shared helpers reused by the binary sensor platform.
 
 ## Credits and license
 

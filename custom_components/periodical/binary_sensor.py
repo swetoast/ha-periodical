@@ -173,7 +173,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Periodical binary sensors."""
-    coordinator: PeriodicalCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: PeriodicalCoordinator = entry.runtime_data
     async_cleanup_registry(hass, entry, BINARY_SENSOR_DESCRIPTIONS, "binary_sensor")
     async_add_entities(
         PeriodicalBinarySensor(coordinator, entry, description)

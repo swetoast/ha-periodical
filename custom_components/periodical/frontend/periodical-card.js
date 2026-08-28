@@ -64,8 +64,7 @@ const ENTITY_MAP = {
   shifts_week: { domain: 'sensor', suffix: 'shifts_this_week' },
   hours_week: { domain: 'sensor', suffix: 'hours_this_week' },
   working_days: { domain: 'sensor', suffix: 'working_days_month' },
-  pay_summary: { domain: 'sensor', suffix: 'pay_summary' },
-  pay_gross: { domain: 'sensor', suffix: 'pay_month_gross' },
+    pay_gross: { domain: 'sensor', suffix: 'pay_month_gross' },
   pay_netto: { domain: 'sensor', suffix: 'pay_month_netto' },
   pay_hours: { domain: 'sensor', suffix: 'pay_month_hours' },
   pay_shifts: { domain: 'sensor', suffix: 'pay_month_shifts' },
@@ -79,8 +78,7 @@ const ENTITY_MAP = {
   shifts_year: { domain: 'sensor', suffix: 'shifts_this_year' },
   shifts_remaining: { domain: 'sensor', suffix: 'shifts_remaining_year' },
   hours_year: { domain: 'sensor', suffix: 'hours_this_year' },
-  vacation_summary: { domain: 'sensor', suffix: 'vacation_summary' },
-  vacation_remaining: { domain: 'sensor', suffix: 'vacation_remaining' },
+    vacation_remaining: { domain: 'sensor', suffix: 'vacation_remaining' },
   vacation_total: { domain: 'sensor', suffix: 'vacation_total' },
   vacation_used: { domain: 'sensor', suffix: 'vacation_used' },
   absences: { domain: 'sensor', suffix: 'absences_count' },
@@ -88,8 +86,7 @@ const ENTITY_MAP = {
   sick_ob_summary: { domain: 'sensor', suffix: 'sick_ob_summary' },
   absence_summary: { domain: 'sensor', suffix: 'absence_summary' },
   api_problem: { domain: 'binary_sensor', suffix: 'api_problem' },
-  api_issues: { domain: 'binary_sensor', suffix: 'api_issues' },
-};
+  };
 
 function parseLocalDate(str) {
   if (!str || str === 'unknown' || str === 'unavailable') return null;
@@ -1040,14 +1037,6 @@ class PeriodicalCard extends HTMLElement {
     return this._state(k)?.attributes?.[a] ?? null;
   }
 
-  _numOr(key, compoundKey, attr) {
-    const direct = this._num(key);
-    if (direct !== null) return direct;
-
-    const a = this._attr(compoundKey, attr);
-    const v = parseFloat(a);
-    return isNaN(v) ? null : v;
-  }
 
   _relevantEids() {
     if (!this._prefix()) return [];
@@ -1170,14 +1159,14 @@ class PeriodicalCard extends HTMLElement {
     const shiftsWeek = this._num('shifts_week');
     const hoursWeek = this._num('hours_week');
 
-    const payGross = this._numOr('pay_gross', 'pay_summary', 'brutto_pay');
-    const payNetto = this._numOr('pay_netto', 'pay_summary', 'netto_pay') ?? this._num('pay_summary');
-    const payHours = this._numOr('pay_hours', 'pay_summary', 'total_hours');
-    const payShifts = this._numOr('pay_shifts', 'pay_summary', 'num_shifts');
+    const payGross = this._num('pay_gross');
+    const payNetto = this._num('pay_netto');
+    const payHours = this._num('pay_hours');
+    const payShifts = this._num('pay_shifts');
     const workingDays = this._num('working_days');
-    const payOncall = this._numOr('pay_oncall', 'pay_summary', 'oncall_pay');
-    const payOncallHours = this._numOr('pay_oncall_hours', 'pay_summary', 'oncall_hours');
-    const payOvertime = this._numOr('pay_overtime', 'pay_summary', 'ot_pay');
+    const payOncall = this._num('pay_oncall');
+    const payOncallHours = this._num('pay_oncall_hours');
+    const payOvertime = this._num('pay_overtime');
     const paySickDays = this._num('pay_sick_days');
     const paySickHours = this._num('pay_sick_hours');
     const payVabDays = this._num('pay_vab_days');
@@ -1208,9 +1197,9 @@ class PeriodicalCard extends HTMLElement {
       ? Math.max(0, Math.min(100, Math.round(((shiftsYear - shiftsRemaining) / shiftsYear) * 100)))
       : null;
 
-    const vacRem = this._num('vacation_remaining') ?? this._num('vacation_summary');
-    const vacTotal = this._numOr('vacation_total', 'vacation_summary', 'total_available');
-    const vacUsed = this._numOr('vacation_used', 'vacation_summary', 'used_days');
+    const vacRem = this._num('vacation_remaining');
+    const vacTotal = this._num('vacation_total');
+    const vacUsed = this._num('vacation_used');
 
     const vacPct = (vacTotal > 0)
       ? Math.max(0, Math.min(100, Math.round(((vacUsed ?? 0) / vacTotal) * 100)))
@@ -1218,15 +1207,11 @@ class PeriodicalCard extends HTMLElement {
 
     const absences = this._num('absences');
 
-    const vacProj = this._attr('vacation_summary', 'projection') || {};
+    const vacProj = this._attr('vacation_remaining', 'projection') || {};
     const vacPayout = (typeof vacProj.payout_total === 'number') ? vacProj.payout_total : null;
     const vacDaysToSave = (typeof vacProj.days_to_save === 'number') ? vacProj.days_to_save : null;
 
-    const apiKey = this._state('api_problem')
-      ? 'api_problem'
-      : this._state('api_issues')
-        ? 'api_issues'
-        : 'api_problem';
+    const apiKey = 'api_problem';
 
     const apiState = this._val(apiKey);
     const apiStale =

@@ -5,6 +5,8 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "periodical"
+DATA_FRONTEND: Final = "frontend"
+DATA_FRONTEND_LOCK: Final = "frontend_lock"
 
 CONF_API_KEY: Final = "api_key"
 CONF_BASE_URL: Final = "base_url"

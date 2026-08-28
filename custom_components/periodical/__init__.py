@@ -1,47 +1,69 @@
 """Periodical integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_USER_ID, DOMAIN
-from .coordinator import PeriodicalCoordinator
-from .services import (
-    ALL_SERVICES,
-    async_register_services,
-    async_unregister_services,
+from .const import (
+    CONF_USER_ID,
+    DATA_FRONTEND,
+    DATA_FRONTEND_LOCK,
+    DOMAIN,
 )
+from .coordinator import PeriodicalCoordinator
+from .frontend import PeriodicalFrontendRegistration
+from .services import ALL_SERVICES, async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+type PeriodicalConfigEntry = ConfigEntry[PeriodicalCoordinator]
 
 
 def _async_migrate_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Drop the base URL from the entry unique id.
-
-    Early versions keyed the entry on `<domain>_<base_url>_<user_id>`, so simply
-    correcting the API host produced a second entry for the same person.
-    """
+    """Drop the base URL from the entry unique id."""
     desired = f"{DOMAIN}_{entry.data[CONF_USER_ID]}"
     if entry.unique_id != desired:
         _LOGGER.debug("Migrating config entry unique_id %s -> %s", entry.unique_id, desired)
         hass.config_entries.async_update_entry(entry, unique_id=desired)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def _async_setup_frontend(hass: HomeAssistant) -> None:
+    """Set up the optional bundled card once without blocking integration setup."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    lock = domain_data.setdefault(DATA_FRONTEND_LOCK, asyncio.Lock())
+    async with lock:
+        if DATA_FRONTEND in domain_data:
+            return
+        registration = PeriodicalFrontendRegistration(hass)
+        try:
+            await registration.async_register()
+        except (OSError, RuntimeError, ValueError):
+            _LOGGER.exception(
+                "Unable to register the bundled Periodical card; "
+                "the integration will continue without automatic card registration"
+            )
+            return
+        domain_data[DATA_FRONTEND] = registration
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: PeriodicalConfigEntry
+) -> bool:
     """Set up Periodical from a config entry."""
     _async_migrate_unique_id(hass, entry)
 
     coordinator = PeriodicalCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    # The frontend is optional. Failure must not block sensors or services.
+    await _async_setup_frontend(hass)
 
-    # async_setup_entry runs per config entry; the services are global.
     if not all(hass.services.has_service(DOMAIN, name) for name in ALL_SERVICES):
         async_register_services(hass)
 
@@ -50,21 +72,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the entry when its options or data change (e.g. after reauth)."""
+async def async_reload_entry(
+    hass: HomeAssistant, entry: PeriodicalConfigEntry
+) -> None:
+    """Reload the entry when its options or data change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: PeriodicalConfigEntry
+) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
         return False
 
-    entries = hass.data.get(DOMAIN, {})
-    entries.pop(entry.entry_id, None)
-    # Drop the services once the last entry is gone so they do not linger as no-ops.
-    if not entries:
-        hass.data.pop(DOMAIN, None)
+    if not any(
+        loaded.entry_id != entry.entry_id
+        for loaded in hass.config_entries.async_loaded_entries(DOMAIN)
+    ):
         async_unregister_services(hass)
     return True

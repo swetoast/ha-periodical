@@ -53,16 +53,16 @@ SCHEMA_VACATION_YEAR = vol.Schema({**_BASE, vol.Optional("year"): vol.Coerce(int
 
 def _coordinators(hass: HomeAssistant, call: ServiceCall) -> list[Any]:
     """Coordinators the call targets, honouring an optional config_entry_id."""
-    entries: dict[str, Any] = hass.data.get(DOMAIN, {})
+    loaded = hass.config_entries.async_loaded_entries(DOMAIN)
     entry_id = call.data.get(CONF_ENTRY_ID)
     if entry_id is None:
-        return list(entries.values())
-    coordinator = entries.get(entry_id)
-    if coordinator is None:
+        return [entry.runtime_data for entry in loaded]
+    entry = next((item for item in loaded if item.entry_id == entry_id), None)
+    if entry is None:
         raise HomeAssistantError(
             f"No loaded Periodical config entry with id {entry_id!r}"
         )
-    return [coordinator]
+    return [entry.runtime_data]
 
 
 def async_register_services(hass: HomeAssistant) -> None:

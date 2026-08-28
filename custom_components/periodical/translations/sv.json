@@ -12,38 +12,235 @@
           "api_key": "Din personliga API-nyckel (Bearer-token)",
           "base_url": "Lämna standardvärdet om du inte kör Periodical lokalt"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect Periodical",
+        "description": "The API key for {account} was rejected. Enter a new one to reconnect.",
+        "data": {
+          "api_key": "API Key"
+        }
       }
     },
     "error": {
       "invalid_auth": "Ogiltig API-nyckel – autentisering misslyckades.",
       "cannot_connect": "Kunde inte ansluta till Periodical API. Kontrollera nätverk och bas-URL.",
       "no_user_id": "API-nyckeln fungerade men inget användar-ID returnerades. Kontakta support.",
+      "wrong_account": "That API key belongs to a different Periodical user. Use a key for the same account, or add a new integration entry instead.",
       "unknown": "Ett oväntat fel inträffade. Kontrollera Home Assistant-loggarna."
     },
     "abort": {
-      "already_configured": "Det här Periodical-kontot är redan konfigurerat."
+      "already_configured": "Det här Periodical-kontot är redan konfigurerat.",
+      "reauth_successful": "Periodical reconnected successfully.",
+      "reauth_unsuccessful": "Could not reconnect Periodical. Remove and re-add the integration."
     }
   },
   "entity": {
     "sensor": {
-      "shift_start_today": { "name": "Passets starttid idag" },
-      "shift_end_today": { "name": "Passets sluttid idag" },
-      "coworkers_today": { "name": "Kollegor idag" },
-      "ob_today": { "name": "OB-tillägg idag" },
-      "next_shift_date": { "name": "Nästa passdatum" },
-      "next_shift_start": { "name": "Nästa passets start" },
-      "next_shift_end": { "name": "Nästa passets slut" },
-      "vacation_remaining": { "name": "Kvarvarande semesterdagar" },
-      "vacation_used": { "name": "Använda semesterdagar" },
-      "vacation_total": { "name": "Totala semesterdagar" },
-      "pay_month_gross": { "name": "Månadslön (brutto)" },
-      "pay_month_hours": { "name": "Arbetade timmar (månad)" },
-      "absences_count": { "name": "Frånvarotillfällen i år" },
-      "working_days_month": { "name": "Arbetsdagar denna månad" }
+      "account": {
+        "name": "Konto"
+      },
+      "shift_start_today": {
+        "name": "Passets starttid idag"
+      },
+      "shift_end_today": {
+        "name": "Passets sluttid idag"
+      },
+      "coworkers_today": {
+        "name": "Kollegor idag"
+      },
+      "status_today": {
+        "name": "Status idag"
+      },
+      "ob_today": {
+        "name": "OB-tillägg idag"
+      },
+      "rotation_week": {
+        "name": "Rotationsvecka"
+      },
+      "shifts_this_week": {
+        "name": "Pass denna vecka"
+      },
+      "hours_this_week": {
+        "name": "Timmar denna vecka"
+      },
+      "working_days_month": {
+        "name": "Arbetsdagar denna månad"
+      },
+      "shifts_this_year": {
+        "name": "Pass i år"
+      },
+      "shifts_remaining_year": {
+        "name": "Återstående pass i år"
+      },
+      "hours_this_year": {
+        "name": "Timmar i år"
+      },
+      "next_shift_date": {
+        "name": "Nästa passdatum"
+      },
+      "next_shift_start": {
+        "name": "Nästa passets start"
+      },
+      "next_shift_end": {
+        "name": "Nästa passets slut"
+      },
+      "tomorrow_shift_date": {
+        "name": "Morgondagens passdatum"
+      },
+      "tomorrow_shift_start": {
+        "name": "Morgondagens pass start"
+      },
+      "tomorrow_shift_end": {
+        "name": "Morgondagens pass slut"
+      },
+      "vacation_remaining": {
+        "name": "Kvarvarande semesterdagar"
+      },
+      "vacation_used": {
+        "name": "Använda semesterdagar"
+      },
+      "vacation_total": {
+        "name": "Totala semesterdagar"
+      },
+      "pay_month_gross": {
+        "name": "Månadslön (brutto)"
+      },
+      "pay_month_netto": {
+        "name": "Månadslön (netto)"
+      },
+      "pay_month_hours": {
+        "name": "Arbetade timmar (månad)"
+      },
+      "pay_month_shifts": {
+        "name": "Månadens pass"
+      },
+      "pay_oncall_month": {
+        "name": "Månadens beredskapsersättning"
+      },
+      "pay_oncall_hours_month": {
+        "name": "Månadens beredskapstimmar"
+      },
+      "pay_overtime_month": {
+        "name": "Månadens övertidsersättning"
+      },
+      "pay_sick_days_month": {
+        "name": "Sjukdagar denna månad"
+      },
+      "pay_sick_hours_month": {
+        "name": "Sjuktimmar denna månad"
+      },
+      "pay_vab_days_month": {
+        "name": "VAB-dagar denna månad"
+      },
+      "pay_leave_days_month": {
+        "name": "Ledighetsdagar denna månad"
+      },
+      "absences_count": {
+        "name": "Frånvarotillfällen i år"
+      },
+      "ob_summary": {
+        "name": "Månadens OB"
+      },
+      "sick_ob_summary": {
+        "name": "Månadens sjuk-OB"
+      },
+      "absence_summary": {
+        "name": "Månadens frånvaro"
+      }
     },
     "binary_sensor": {
-      "working_today": { "name": "Arbetar idag" },
-      "absent_today": { "name": "Frånvarande idag" }
+      "working_today": {
+        "name": "Arbetar idag"
+      },
+      "absent_today": {
+        "name": "Frånvarande idag"
+      },
+      "api_problem": {
+        "name": "API-problem"
+      },
+      "account_active": {
+        "name": "Kontot är aktivt"
+      }
+    }
+  },
+  "services": {
+    "get_schedule_date": {
+      "name": "Get schedule for date",
+      "description": "Fetch the schedule for a specific date.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "Limit the call to one configured Periodical account."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The date to fetch (YYYY-MM-DD)."
+        }
+      }
+    },
+    "get_schedule_week": {
+      "name": "Get schedule for week",
+      "description": "Fetch the schedule for the ISO week containing the given date.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "Limit the call to one configured Periodical account."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Any date within the desired ISO week (YYYY-MM-DD)."
+        }
+      }
+    },
+    "get_schedule_range": {
+      "name": "Get schedule for range",
+      "description": "Fetch the schedule for a date range of at most 70 days.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "Limit the call to one configured Periodical account."
+        },
+        "from_date": {
+          "name": "From date",
+          "description": "Start of the range (YYYY-MM-DD)."
+        },
+        "to_date": {
+          "name": "To date",
+          "description": "End of the range (YYYY-MM-DD)."
+        }
+      }
+    },
+    "get_pay_month": {
+      "name": "Get monthly pay",
+      "description": "Fetch the pay summary for a month.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "Limit the call to one configured Periodical account."
+        },
+        "year": {
+          "name": "Year",
+          "description": "Year (defaults to the current year)."
+        },
+        "month": {
+          "name": "Month",
+          "description": "Month 1-12 (defaults to the current month)."
+        }
+      }
+    },
+    "get_vacation_balance": {
+      "name": "Get vacation balance",
+      "description": "Fetch the vacation balance for a year.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Account",
+          "description": "Limit the call to one configured Periodical account."
+        },
+        "year": {
+          "name": "Year",
+          "description": "Year (defaults to the current year)."
+        }
+      }
     }
   }
 }

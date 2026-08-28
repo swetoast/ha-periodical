@@ -1,7 +1,7 @@
 {
   "domain": "periodical",
   "name": "Periodical",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "documentation": "https://github.com/swetoast/ha-periodical",
   "issue_tracker": "https://github.com/swetoast/ha-periodical/issues",
   "codeowners": [
