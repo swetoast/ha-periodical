@@ -28,11 +28,13 @@ CIRCUIT_FAILURE_WINDOW_SECONDS = 60.0
 CIRCUIT_FAILURE_THRESHOLD = 5
 CIRCUIT_OPEN_SECONDS = 300.0
 
-HTTP_AUTH_STATUSES = frozenset({401, 403})
+HTTP_AUTH_STATUSES = frozenset({401})
+HTTP_FORBIDDEN_STATUSES = frozenset({403})
 HTTP_RETRY_STATUSES = frozenset({408, 421, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524})
 
 POLICY_SUCCESS = "success"
 POLICY_AUTH_FAIL = "auth_fail"
+POLICY_FORBIDDEN = "forbidden"
 POLICY_RETRY = "retry"
 POLICY_REDIRECT = "redirect"
 POLICY_FAIL = "fail"
@@ -43,7 +45,11 @@ class PeriodicalApiError(Exception):
 
 
 class PeriodicalAuthError(PeriodicalApiError):
-    """Raised on authentication failures."""
+    """Raised when authentication is missing or no longer valid."""
+
+
+class PeriodicalForbiddenError(PeriodicalApiError):
+    """Raised when valid credentials lack access to an endpoint."""
 
 
 class PeriodicalApi:
@@ -126,6 +132,8 @@ class PeriodicalApi:
         """Classify an HTTP status.  Single source of truth, total over all ints."""
         if status in HTTP_AUTH_STATUSES:
             return POLICY_AUTH_FAIL
+        if status in HTTP_FORBIDDEN_STATUSES:
+            return POLICY_FORBIDDEN
         if status in HTTP_RETRY_STATUSES:
             return POLICY_RETRY
         if 200 <= status < 300:
@@ -348,8 +356,15 @@ class PeriodicalApi:
                         text = await self._response_text(resp)
 
                         if policy == POLICY_AUTH_FAIL:
-                            msg = "HTTP 401 Unauthorized" if status == 401 else "HTTP 403 Forbidden"
-                            api_err = PeriodicalAuthError(f"GET {path} failed: {msg}")
+                            api_err = PeriodicalAuthError(
+                                f"GET {path} failed: HTTP 401 Unauthorized"
+                            )
+                            self._record_failure(path, api_err, status=status)
+                            raise api_err
+                        if policy == POLICY_FORBIDDEN:
+                            api_err = PeriodicalForbiddenError(
+                                f"GET {path} failed: HTTP 403 Forbidden"
+                            )
                             self._record_failure(path, api_err, status=status)
                             raise api_err
 
@@ -450,9 +465,21 @@ class PeriodicalApi:
         """GET /shifts — all shift type definitions (code, label, times, color)."""
         return await self._get("/shifts")
 
-    async def get_user_status(self, user_id: int) -> dict[str, Any]:
-        """GET /users/{user_id}/status — today's status."""
-        return await self._get(f"/users/{user_id}/status")
+    async def get_user_status(
+        self,
+        user_id: int,
+        day: str | None = None,
+        at_time: str | None = None,
+    ) -> dict[str, Any]:
+        """GET /users/{user_id}/status, optionally simulating date and time."""
+        params: dict[str, str] = {}
+        if day is not None:
+            params["date"] = day
+        if at_time is not None:
+            params["time"] = at_time
+        return await self._get(
+            f"/users/{user_id}/status", params=params or None
+        )
 
     async def get_schedule_month(self, user_id: int) -> dict[str, Any]:
         """GET /users/{user_id}/schedule/month — current month schedule."""
@@ -516,6 +543,18 @@ class PeriodicalApi:
         params = {"year": year} if year is not None else None
         return await self._get(f"/users/{user_id}/absences", params=params)
 
-    async def get_next_shift(self, user_id: int) -> dict[str, Any]:
-        """GET /users/{user_id}/next-shift — next working day."""
-        return await self._get(f"/users/{user_id}/next-shift")
+    async def get_next_shift(
+        self,
+        user_id: int,
+        day: str | None = None,
+        at_time: str | None = None,
+    ) -> dict[str, Any]:
+        """GET /users/{user_id}/next-shift, optionally simulating date and time."""
+        params: dict[str, str] = {}
+        if day is not None:
+            params["date"] = day
+        if at_time is not None:
+            params["time"] = at_time
+        return await self._get(
+            f"/users/{user_id}/next-shift", params=params or None
+        )
