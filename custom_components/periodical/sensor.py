@@ -139,12 +139,28 @@ def _coworkers_count(data: Data) -> int:
     return len(sched.coworkers(data))
 
 
+def _same_shift(data: Data) -> list[str] | None:
+    """Names of co-workers on the same shift as the user right now.
+
+    The roster covers everyone scheduled that day, so this narrows it to the
+    people actually working alongside you.  Overtime cover is booked as
+    `OT-<code>` and counts as the same shift.
+    """
+    active = sched.active_shift(data)
+    code = active.shift.get("code") if active is not None else None
+    if not code:
+        return None
+    wanted = {code, f"OT-{code}"}
+    return [p.get("name") for p in sched.coworkers(data) if p.get("shift_code") in wanted]
+
+
 def _coworkers_attrs(data: Data) -> Attrs:
     active = sched.active_shift(data)
     return {
         "for_carried_over_shift": bool(
             active and active.carried_over and active.coworkers is not None
         ),
+        "same_shift": _same_shift(data),
         "co_workers": [
             {
                 "name": person.get("name"),

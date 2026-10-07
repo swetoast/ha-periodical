@@ -476,10 +476,11 @@ def is_absent_today(data: Data) -> bool | None:
 
 
 def coworkers(data: Data) -> list[dict[str, Any]]:
-    """Colleagues working alongside the user right now.
+    """The co-worker roster relevant right now.
 
-    During a carried-over night shift these are that shift's own co-workers,
-    which the API reports separately from the day's roster.
+    During a carried-over night shift this is the roster of the day that shift
+    started, which the API reports inside `currently_active_shift`.  Either way
+    it lists everyone scheduled that day, not only the user's own shift.
     """
     active = active_shift(data)
     if active is not None and active.coworkers is not None:
