@@ -1,7 +1,9 @@
 # Periodical for Home Assistant
 
 [![HACS Custom][hacs-shield]][hacs-url]
+[![GitHub Release][release-shield]][release-url]
 [![License][license-shield]][license-url]
+[![Downloads][downloads-shield]][release-url]
 [![Home Assistant][ha-shield]][ha-url]
 
 Brings your Periodical shift rota into Home Assistant. Exposes today's shift, upcoming shifts, working status, absence, vacation balance and monthly pay as native entities you can automate against.
@@ -27,10 +29,10 @@ Built for rotating shift work: it understands overnight shifts that run past mid
 
 * UI config flow, no YAML required
 * Automatic re-authentication when the API key is revoked or rotated
-* 37 sensors and 4 binary sensors across schedule, absence, vacation and payroll
+* 37 sensors and 5 binary sensors across schedule, absence, on-call, vacation and payroll
 * Absence aware: vacation, sick, VAB and leave days report as absent instead of showing the rota shift
-* Overnight aware: a night shift started at 22:00 yesterday is still the active shift at 02:00 today
-* On-call aware: stand-by hours are tracked separately so they never inflate worked hour totals
+* Overnight aware: a night shift started at 22:00 yesterday is still the active shift at 02:00 today, with that shift's own co-workers
+* On-call aware: stand-by is tracked separately from work, so shift and hour totals reconcile with your payslip
 * Tiered polling that matches how fast each endpoint actually changes, with forced refresh at day, month and year boundaries
 * Five services for ad hoc lookups, returning data both as a response variable and as an event
 * Multi account capable: add a second Periodical user as a second config entry
@@ -62,6 +64,12 @@ Or do it by hand:
 4. Search for **Periodical** and select **Download**
 5. Restart Home Assistant
 
+### Manual
+
+1. Download the latest release archive from the [releases page][release-url]
+2. Copy the `periodical` folder into `config/custom_components/` on your Home Assistant instance
+3. Restart Home Assistant
+
 The result should look like this:
 
 ```text
@@ -74,13 +82,11 @@ config/custom_components/periodical/
 ├── coordinator.py
 ├── entity.py
 ├── manifest.json
+├── schedule.py
 ├── sensor.py
 ├── services.py
 ├── services.yaml
 ├── strings.json
-├── frontend/
-│   ├── __init__.py
-│   └── periodical-card.js
 └── translations/
     └── en.json
 ```
@@ -94,7 +100,7 @@ Or navigate to **Settings** > **Devices & services** > **Add integration** and s
 | Field | Required | Default | Notes |
 |---|---|---|---|
 | API Key | Yes | | Your personal bearer token from the Periodical web portal, under Settings > API |
-| API Base URL | No | `https://periodical.com/api/v1` | Change only if you self host Periodical |
+| API Base URL | No | `https://periodical.kakanweb.com/api/v1` | Change only if you self host Periodical |
 
 The key is validated immediately by calling `/me`. The numeric user id from that response identifies the account, so the entry survives a base URL change without duplicating itself.
 
@@ -114,8 +120,9 @@ All entities live under a single device named after the Periodical account.
 
 | Entity | Description |
 |---|---|
-| `binary_sensor.periodical_working_today` | On when today's status is `working` |
-| `binary_sensor.periodical_absent_today` | On for vacation, sick, VAB, leave and parental days |
+| `binary_sensor.periodical_working_today` | On when you are actually at work today, including the tail of last night's shift and call-ins from on-call. Off on pure on-call days |
+| `binary_sensor.periodical_on_call_today` | On when today's rota shift is on-call stand-by. The `called_in` attribute shows whether overtime was booked |
+| `binary_sensor.periodical_absent_today` | On for vacation, sick, VAB, leave and parental days, once any carried over night shift has ended |
 | `binary_sensor.periodical_api_problem` | Diagnostic. On when an endpoint failed, data is stale, or the circuit breaker is open |
 | `binary_sensor.periodical_account_active` | Diagnostic. Reflects the `is_active` flag from `/me` |
 
@@ -128,7 +135,7 @@ All entities live under a single device named after the Periodical account.
 | `sensor.periodical_shift_start_today` | timestamp | Start of the shift currently in effect, blank on absence and days off |
 | `sensor.periodical_shift_end_today` | timestamp | End of that shift, rolled past midnight when it runs overnight |
 | `sensor.periodical_status_today` | | `working`, `off`, `vacation`, `sick`, `vab`, `leave`, `parental` or `unknown` |
-| `sensor.periodical_coworkers_today` | people | How many colleagues are scheduled today, with the roster in attributes |
+| `sensor.periodical_coworkers_today` | people | Colleagues working alongside you right now, with the roster in attributes. During a carried over night shift this is that shift's crew |
 | `sensor.periodical_ob_today` | SEK | Inconvenient hours supplement earned today |
 | `sensor.periodical_rotation_week` | | Position in the rotation cycle |
 
@@ -147,10 +154,10 @@ All entities live under a single device named after the Periodical account.
 
 | Entity | Unit | Description |
 |---|---|---|
-| `sensor.periodical_shifts_this_week` | shifts | Worked shifts in the current ISO week, with a day by day breakdown in attributes |
-| `sensor.periodical_hours_this_week` | h | Worked hours this week, on-call reported separately in attributes |
-| `sensor.periodical_working_days_month` | days | Worked days in the current calendar month |
-| `sensor.periodical_shifts_this_year` | shifts | Worked shifts across the year |
+| `sensor.periodical_shifts_this_week` | shifts | Worked shifts in the current ISO week, on-call excluded, with a day by day breakdown in attributes |
+| `sensor.periodical_hours_this_week` | h | Worked hours this week, with on-call and overtime reported separately in attributes |
+| `sensor.periodical_working_days_month` | days | Worked shifts in the current calendar month, on-call excluded |
+| `sensor.periodical_shifts_this_year` | shifts | Worked shifts across the year, on-call excluded |
 | `sensor.periodical_shifts_remaining_year` | shifts | Worked shifts still ahead of today |
 | `sensor.periodical_hours_this_year` | h | Worked hours across the year |
 
@@ -205,17 +212,29 @@ The same applies to tomorrow's sensors and to the weekly breakdown, which flags 
 
 ### Overnight shifts
 
-A night shift starting at 22:00 belongs to the day it began on. At 02:00 the following morning, `shift_start_today` still reports 22:00 yesterday and `shift_end_today` reports 06:30 today. The `shift_date` attribute tells you which calendar day the active shift is anchored to. Yesterday's shift is only treated as active while its end time is still in the future.
+A night shift starting at 22:00 belongs to the day it began on. At 02:00 the following morning:
+
+* `shift_start_today` reports 22:00 yesterday and `shift_end_today` reports 06:30 today
+* `working_today` is on, even if today itself is a day off
+* `coworkers_today` lists the people on that night shift, not today's day roster
+* `absent_today` stays off on the first morning of a holiday until the shift ends
+
+The API reports a running overnight shift in `currently_active_shift` on `/status`, and that field takes precedence over the day's own fields. If it is missing, the integration falls back to yesterday's entry in the schedule window. Either way, the shift is only treated as active while its end time is still in the future, and the `carried_over` and `shift_date` attributes show which day it is anchored to.
+
+`status_today` always reports the day's own status, so a day off that starts with the end of a night shift still reads `off`.
 
 ### On-call is not worked time
 
-On-call is written as `00:00` to `00:00` with an overnight flag, which reads as a full 24 hours. Payroll counts it separately, so the integration does too:
+On-call is written as `00:00` to `00:00` with an overnight flag and a status of `working`, which reads as a full 24 hour shift. Payroll books it as neither a shift nor worked hours, so the integration follows payroll:
 
-* `hours_this_week` and `hours_this_year` cover worked hours only
-* on-call appears in those sensors' attributes as `oncall_hours`, alongside `total_hours_including_oncall`
-* `pay_oncall_month` and `pay_oncall_hours_month` carry the payroll figures
+* shift counters and `working_days_month` exclude on-call days
+* `hours_this_week` and `hours_this_year` cover worked shift hours only
+* the attributes on those sensors carry `oncall_days`, `oncall_hours`, `overtime_hours` and `total_hours_including_oncall`
+* `on_call_today` is on for stand-by days, while `working_today` stays off unless you were called in
 
-This keeps the hour sensors reconcilable against your payslip instead of running roughly 24 hours high per on-call day.
+Being called in from on-call is booked as overtime on the day. It turns `working_today` on and shows up as `overtime_hours`, but does not add a shift, again matching payroll.
+
+Checked against real data: the June 2026 schedule has 22 days with status `working`, of which 4 are on-call. The integration reports 18 shifts, 153 worked hours and 96 on-call hours, which is exactly what that month's payslip shows.
 
 ## Update strategy
 
@@ -228,9 +247,9 @@ A single 15 minute coordinator cycle refreshes each endpoint on its own schedule
 | 4 hours | `/schedule/month`, `/vacation/balance` |
 | 24 hours | `/me`, `/shifts`, `/schedule/year`, `/pay/month` |
 
-Endpoints whose answer is scoped to the current day, month or year are force refreshed the moment the local calendar rolls over, regardless of when they were last fetched. Without that, `/pay/month` would keep serving last month's payslip for up to 24 hours after midnight on the first.
+Endpoints whose answer is scoped to the current day, month or year are force refreshed the moment the local calendar rolls over, regardless of when they were last fetched. An extra refresh is scheduled just after midnight, so day based sensors switch over at 00:00 instead of up to one polling interval later. Without that, `/pay/month` would keep serving last month's payslip for up to 24 hours after midnight on the first.
 
-When an endpoint fails, its last good value is served and `api_problem` turns on with the failing endpoint listed in attributes. Repeated network failures open a circuit breaker for five minutes so a dead API is not hammered. Authentication failures are treated differently: they cannot recover on their own, so they go straight to the re-authentication flow.
+When an endpoint fails, its last good value is served and `api_problem` turns on with the failing endpoint listed in attributes. Repeated network failures open a circuit breaker for five minutes so a dead API is not hammered. A rejected key (HTTP 401) cannot recover on its own, so it goes straight to the re-authentication flow. HTTP 403 is treated as a per endpoint permission problem instead, because pay, vacation and absences are restricted to your own user or an admin. It only triggers re-authentication when it comes from `/me`, which any valid key can read.
 
 ### Endpoints used
 
@@ -402,7 +421,11 @@ Check `sensor.periodical_status_today`. Anything other than `working` blanks the
 
 ### Hour totals disagree with my payslip
 
-Compare `hours_this_week` against its `oncall_hours` attribute. Worked and on-call hours are deliberately separate. `pay_month_hours` is payroll's own figure and is the authoritative one.
+Worked, on-call and overtime hours are deliberately separate, and the worked figures are built to match the payslip's `total_hours` and `num_shifts`. If they still differ, compare against `pay_month_hours`, which is payroll's own figure and the authoritative one. A late change to the rota can make the schedule and a closed payslip disagree.
+
+### Working Today is off on an on-call day
+
+That is intended. On-call is stand-by, so it has its own `binary_sensor.periodical_on_call_today`. If you were called in, the overtime booked on the day turns `working_today` on.
 
 ### Duplicate entities with a `_2` suffix
 
@@ -416,6 +439,7 @@ An older install left rows in the entity registry. Remove the stale entities fro
 │   └── periodical/
 │       ├── api.py            HTTP client: retries, backoff, circuit breaker
 │       ├── coordinator.py    Tiered refresh and calendar rollover
+│       ├── schedule.py       Reading rota payloads: status, shifts, hours
 │       ├── entity.py         Shared entity identity and registry migration
 │       ├── sensor.py         Sensor definitions
 │       ├── binary_sensor.py  Binary sensor definitions
@@ -426,7 +450,7 @@ An older install left rows in the entity registry. Remove the stale entities fro
 └── README.md
 ```
 
-Schedule interpretation is centralized in `sensor.py`, with shared helpers reused by the binary sensor platform.
+`schedule.py` is the single definition of what "working", "absent" and "on-call" mean. Both platforms read from it so they cannot drift apart.
 
 ## Credits and license
 

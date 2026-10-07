@@ -1,0 +1,15 @@
+{
+  "domain": "periodical",
+  "name": "Periodical",
+  "codeowners": [
+    "@swetoast"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/swetoast/ha-periodical",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/swetoast/ha-periodical/issues",
+  "requirements": [],
+  "version": "1.2.0"
+}
