@@ -2,8 +2,9 @@
  * periodical-card.js v6.9
  * Custom Lovelace card for the Periodical Home Assistant integration.
  *
- * Install : copy to <config>/www/periodical-card.js
- * Resource: /local/periodical-card.js?v=6.9  (type: module)
+ * Shipped with the integration and registered automatically as a Lovelace
+ * resource (/periodical-static/periodical-card.js). In YAML mode, add that URL
+ * as a module resource yourself.
  *
  * Minimal config:
  *   type: custom:periodical-card
@@ -49,6 +50,7 @@ function discoverPrefix(hass, forced) {
 const ENTITY_MAP = {
   working_today: { domain: 'binary_sensor', suffix: 'working_today' },
   absent_today: { domain: 'binary_sensor', suffix: 'absent_today' },
+  on_call_today: { domain: 'binary_sensor', suffix: 'on_call_today' },
   shift_start: { domain: 'sensor', suffix: 'shift_start_today' },
   shift_end: { domain: 'sensor', suffix: 'shift_end_today' },
   status_today: { domain: 'sensor', suffix: 'status_today' },
@@ -1104,13 +1106,23 @@ class PeriodicalCard extends HTMLElement {
 
     const statusToday = String(this._val('status_today') || '').toLowerCase();
 
-    const isWorking =
-      this._val('working_today') === 'on' ||
-      statusToday === 'working';
+    // The binary sensors already account for on-call days and for the tail of
+    // last night's shift, so they win whenever they report a state. The raw day
+    // status is only a fallback for installs where a sensor is missing.
+    const workingState = this._val('working_today');
+    const absentState = this._val('absent_today');
+    const onCallState = this._val('on_call_today');
 
-    const isAbsent =
-      this._val('absent_today') === 'on' ||
-      ['absent', 'sick', 'vab', 'leave', 'vacation'].includes(statusToday);
+    const isWorking = workingState !== null
+      ? workingState === 'on'
+      : statusToday === 'working';
+
+    // Finishing a night shift on the first morning of a holiday is still work.
+    const isAbsent = !isWorking && (absentState !== null
+      ? absentState === 'on'
+      : ['absent', 'sick', 'vab', 'leave', 'vacation', 'parental'].includes(statusToday));
+
+    const isOnCall = !isWorking && !isAbsent && onCallState === 'on';
 
     const title = this._userName();
     const rotWeek = this._val('rotation_week');
@@ -1236,6 +1248,12 @@ class PeriodicalCard extends HTMLElement {
       stateClass = 'state-working';
       stateText = 'Working';
       offMessage = '';
+    } else if (isOnCall) {
+      iconName = 'mdi:phone-in-talk';
+      iconClass = 'icon-off';
+      stateClass = 'state-off';
+      stateText = 'On call';
+      offMessage = 'On call today';
     } else {
       iconName = 'mdi:home-outline';
       iconClass = 'icon-off';
@@ -1736,14 +1754,22 @@ class PeriodicalCardEditor extends HTMLElement {
   }
 }
 
-customElements.define('periodical-card', PeriodicalCard);
-customElements.define('periodical-card-editor', PeriodicalCardEditor);
+// An older copy loaded from /local would otherwise make the second define()
+// throw and break every Periodical card on the dashboard.
+if (!customElements.get('periodical-card')) {
+  customElements.define('periodical-card', PeriodicalCard);
+}
+if (!customElements.get('periodical-card-editor')) {
+  customElements.define('periodical-card-editor', PeriodicalCardEditor);
+}
 
 window.customCards = window.customCards ?? [];
-window.customCards.push({
-  type: 'periodical-card',
-  name: 'Periodical',
-  description: 'Work schedule, shifts, pay, vacation and year overview from the Periodical integration.',
-  preview: true,
-  editor: 'periodical-card-editor',
-});
+if (!window.customCards.some((card) => card.type === 'periodical-card')) {
+  window.customCards.push({
+    type: 'periodical-card',
+    name: 'Periodical',
+    description: 'Work schedule, shifts, pay, vacation and year overview from the Periodical integration.',
+    preview: true,
+    editor: 'periodical-card-editor',
+  });
+}

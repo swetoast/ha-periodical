@@ -12,11 +12,32 @@ from homeassistant.helpers.event import async_track_time_change
 
 from .const import CONF_USER_ID, DOMAIN
 from .coordinator import PeriodicalCoordinator
+from .frontend import PeriodicalFrontendRegistration
 from .services import ALL_SERVICES, async_register_services, async_unregister_services
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+
+# Kept apart from hass.data[DOMAIN], which holds one coordinator per entry and is
+# iterated by the services.
+FRONTEND_KEY = f"{DOMAIN}_frontend"
+
+
+async def _async_register_frontend(hass: HomeAssistant) -> None:
+    """Serve the bundled card and add it as a Lovelace resource, once per process.
+
+    The static path can only be registered once, so the registration object
+    lives in hass.data across entry reloads.  A failure here only affects the
+    card and must not stop the schedule sensors from loading.
+    """
+    registration = hass.data.get(FRONTEND_KEY)
+    if registration is None:
+        registration = hass.data[FRONTEND_KEY] = PeriodicalFrontendRegistration(hass)
+    try:
+        await registration.async_register()
+    except Exception:
+        _LOGGER.warning("Could not register the Periodical card", exc_info=True)
 
 
 def _async_migrate_unique_id(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -60,6 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_register_services(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await _async_register_frontend(hass)
 
     # Day-scoped sensors (today, tomorrow, status) would otherwise keep showing
     # yesterday for up to one polling interval after midnight.

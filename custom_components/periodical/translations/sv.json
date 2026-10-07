@@ -3,35 +3,36 @@
     "step": {
       "user": {
         "title": "Anslut till Periodical",
-        "description": "Ange din API-nyckel för Periodical. Du hittar den i Periodical-portalen under Inställningar → API.",
+        "description": "Ange adressen till din Periodical-server och din personliga API-nyckel. Du hittar nyckeln i Periodical-portalen under Inställningar → API.",
         "data": {
           "api_key": "API-nyckel",
-          "base_url": "API-bas-URL"
+          "base_url": "Serveradress"
         },
         "data_description": {
           "api_key": "Din personliga API-nyckel (Bearer-token)",
-          "base_url": "Lämna standardvärdet om du inte kör Periodical lokalt"
+          "base_url": "Till exempel https://periodical.example.com. Sökvägen /api/v1 läggs till automatiskt om du utelämnar den."
         }
       },
       "reauth_confirm": {
-        "title": "Reconnect Periodical",
-        "description": "The API key for {account} was rejected. Enter a new one to reconnect.",
+        "title": "Återanslut Periodical",
+        "description": "API-nyckeln för {account} nekades. Ange en ny nyckel för att återansluta.",
         "data": {
-          "api_key": "API Key"
+          "api_key": "API-nyckel"
         }
       }
     },
     "error": {
-      "invalid_auth": "Ogiltig API-nyckel – autentisering misslyckades.",
+      "invalid_auth": "Ogiltig API-nyckel. Autentiseringen misslyckades.",
       "cannot_connect": "Kunde inte ansluta till Periodical API. Kontrollera nätverk och bas-URL.",
       "no_user_id": "API-nyckeln fungerade men inget användar-ID returnerades. Kontakta support.",
-      "wrong_account": "That API key belongs to a different Periodical user. Use a key for the same account, or add a new integration entry instead.",
-      "unknown": "Ett oväntat fel inträffade. Kontrollera Home Assistant-loggarna."
+      "wrong_account": "API-nyckeln tillhör en annan Periodical-användare. Använd en nyckel för samma konto, eller lägg till integrationen en gång till för den användaren.",
+      "unknown": "Ett oväntat fel inträffade. Kontrollera Home Assistant-loggarna.",
+      "invalid_url": "Ange en fullständig adress som börjar med http:// eller https://."
     },
     "abort": {
       "already_configured": "Det här Periodical-kontot är redan konfigurerat.",
-      "reauth_successful": "Periodical reconnected successfully.",
-      "reauth_unsuccessful": "Could not reconnect Periodical. Remove and re-add the integration."
+      "reauth_successful": "Periodical är återansluten.",
+      "reauth_unsuccessful": "Kunde inte återansluta Periodical. Ta bort integrationen och lägg till den igen."
     }
   },
   "entity": {
@@ -160,85 +161,88 @@
       },
       "account_active": {
         "name": "Kontot är aktivt"
+      },
+      "on_call_today": {
+        "name": "Beredskap idag"
       }
     }
   },
   "services": {
     "get_schedule_date": {
-      "name": "Get schedule for date",
-      "description": "Fetch the schedule for a specific date.",
+      "name": "Hämta schema för datum",
+      "description": "Hämtar schemat för ett visst datum.",
       "fields": {
         "config_entry_id": {
-          "name": "Account",
-          "description": "Limit the call to one configured Periodical account."
+          "name": "Konto",
+          "description": "Begränsa anropet till ett konfigurerat Periodical-konto."
         },
         "date": {
-          "name": "Date",
-          "description": "The date to fetch (YYYY-MM-DD)."
+          "name": "Datum",
+          "description": "Datumet att hämta (ÅÅÅÅ-MM-DD)."
         }
       }
     },
     "get_schedule_week": {
-      "name": "Get schedule for week",
-      "description": "Fetch the schedule for the ISO week containing the given date.",
+      "name": "Hämta schema för vecka",
+      "description": "Hämtar schemat för ISO-veckan som innehåller datumet.",
       "fields": {
         "config_entry_id": {
-          "name": "Account",
-          "description": "Limit the call to one configured Periodical account."
+          "name": "Konto",
+          "description": "Begränsa anropet till ett konfigurerat Periodical-konto."
         },
         "date": {
-          "name": "Date",
-          "description": "Any date within the desired ISO week (YYYY-MM-DD)."
+          "name": "Datum",
+          "description": "Valfritt datum i den önskade ISO-veckan (ÅÅÅÅ-MM-DD)."
         }
       }
     },
     "get_schedule_range": {
-      "name": "Get schedule for range",
-      "description": "Fetch the schedule for a date range of at most 70 days.",
+      "name": "Hämta schema för period",
+      "description": "Hämtar schemat för en period på högst 70 dagar.",
       "fields": {
         "config_entry_id": {
-          "name": "Account",
-          "description": "Limit the call to one configured Periodical account."
+          "name": "Konto",
+          "description": "Begränsa anropet till ett konfigurerat Periodical-konto."
         },
         "from_date": {
-          "name": "From date",
-          "description": "Start of the range (YYYY-MM-DD)."
+          "name": "Från datum",
+          "description": "Periodens första dag (ÅÅÅÅ-MM-DD)."
         },
         "to_date": {
-          "name": "To date",
-          "description": "End of the range (YYYY-MM-DD)."
+          "name": "Till datum",
+          "description": "Periodens sista dag (ÅÅÅÅ-MM-DD)."
         }
       }
     },
     "get_pay_month": {
-      "name": "Get monthly pay",
-      "description": "Fetch the pay summary for a month.",
+      "name": "Hämta månadslön",
+      "description": "Hämtar lönesammanställningen för en månad.",
       "fields": {
         "config_entry_id": {
-          "name": "Account",
-          "description": "Limit the call to one configured Periodical account."
+          "name": "Konto",
+          "description": "Begränsa anropet till ett konfigurerat Periodical-konto."
         },
         "year": {
-          "name": "Year",
-          "description": "Year (defaults to the current year)."
+          "name": "År",
+          "description": "År (standard är innevarande år)."
         },
         "month": {
-          "name": "Month",
-          "description": "Month 1-12 (defaults to the current month)."
+          "name": "Månad",
+          "description": "Månad 1-12 (standard är innevarande månad)."
         }
       }
     },
     "get_vacation_balance": {
-      "name": "Get vacation balance",
-      "description": "Fetch the vacation balance for a year.",
+      "name": "Hämta semestersaldo",
+      "description": "Hämtar semestersaldot för ett år.",
       "fields": {
         "config_entry_id": {
-          "name": "Account",
-          "description": "Limit the call to one configured Periodical account."
+          "name": "Konto",
+          "description": "Begränsa anropet till ett konfigurerat Periodical-konto."
         },
         "year": {
-          "name": "Year",
-          "description": "Year (defaults to the current year)."
+          "name": "År",
+          "description": "År (standard är innevarande år)."
         }
       }
     }

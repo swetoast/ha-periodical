@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "Connect to Periodical",
-        "description": "Enter your Periodical API key. You can find it in the Periodical web portal under Settings → API.",
+        "description": "Enter the address of your Periodical server and your personal API key. You can find the key in the Periodical web portal under Settings → API.",
         "data": {
           "api_key": "API Key",
-          "base_url": "API Base URL"
+          "base_url": "Server address"
         },
         "data_description": {
           "api_key": "Your personal API key (Bearer token)",
-          "base_url": "Leave as default unless you self-host Periodical"
+          "base_url": "For example https://periodical.example.com. The /api/v1 path is added for you if you leave it out."
         }
       },
       "reauth_confirm": {
@@ -26,7 +26,8 @@
       "cannot_connect": "Could not connect to the Periodical API. Check your network and Base URL.",
       "no_user_id": "API key authenticated but no user ID was returned. Contact support.",
       "wrong_account": "That API key belongs to a different Periodical user. Use a key for the same account, or add a new integration entry instead.",
-      "unknown": "An unexpected error occurred. Check Home Assistant logs for details."
+      "unknown": "An unexpected error occurred. Check Home Assistant logs for details.",
+      "invalid_url": "Enter a full address starting with http:// or https://."
     },
     "abort": {
       "already_configured": "This Periodical account is already configured.",

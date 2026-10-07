@@ -31,7 +31,6 @@ CIRCUIT_FAILURE_WINDOW_SECONDS: Final = 60.0
 CIRCUIT_FAILURE_THRESHOLD: Final = 5
 CIRCUIT_OPEN_SECONDS: Final = 300.0
 
-AUTH_STATUSES: Final = frozenset({HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN})
 RETRY_STATUSES: Final = frozenset(
     {
         HTTPStatus.REQUEST_TIMEOUT,
@@ -66,9 +65,19 @@ class Policy(StrEnum):
 
     SUCCESS = "success"
     AUTH_FAIL = "auth_fail"
+    FORBIDDEN = "forbidden"
     RETRY = "retry"
     REDIRECT = "redirect"
     FAIL = "fail"
+
+
+# Module-level names for the policies, part of the client's public contract.
+POLICY_SUCCESS: Final = Policy.SUCCESS
+POLICY_AUTH_FAIL: Final = Policy.AUTH_FAIL
+POLICY_FORBIDDEN: Final = Policy.FORBIDDEN
+POLICY_RETRY: Final = Policy.RETRY
+POLICY_REDIRECT: Final = Policy.REDIRECT
+POLICY_FAIL: Final = Policy.FAIL
 
 
 class PeriodicalApiError(Exception):
@@ -177,8 +186,10 @@ class PeriodicalApi:
     @staticmethod
     def _status_policy(status: int) -> Policy:
         """Classify an HTTP status.  Total over every integer, no fallthrough."""
-        if status in AUTH_STATUSES:
+        if status == HTTPStatus.UNAUTHORIZED:
             return Policy.AUTH_FAIL
+        if status == HTTPStatus.FORBIDDEN:
+            return Policy.FORBIDDEN
         if status in RETRY_STATUSES:
             return Policy.RETRY
         if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
@@ -396,12 +407,14 @@ class PeriodicalApi:
         text = await self._read_text(resp)
 
         if policy is Policy.AUTH_FAIL:
-            if status == HTTPStatus.UNAUTHORIZED:
-                err: PeriodicalApiError = PeriodicalAuthError(
-                    f"GET {path} failed: HTTP 401 Unauthorized"
-                )
-            else:
-                err = PeriodicalForbiddenError(f"GET {path} failed: HTTP 403 Forbidden")
+            err: PeriodicalApiError = PeriodicalAuthError(
+                f"GET {path} failed: HTTP 401 Unauthorized"
+            )
+            self._record_failure(path, err, status=status)
+            raise err
+
+        if policy is Policy.FORBIDDEN:
+            err = PeriodicalForbiddenError(f"GET {path} failed: HTTP 403 Forbidden")
             self._record_failure(path, err, status=status)
             raise err
 
@@ -538,9 +551,21 @@ class PeriodicalApi:
         """GET /shifts: every shift definition (code, label, times, color)."""
         return await self._get("/shifts")
 
-    async def get_user_status(self, user_id: int) -> dict[str, Any]:
-        """GET /users/{user_id}/status: today's status."""
-        return await self._get(f"/users/{user_id}/status")
+    @staticmethod
+    def _simulation_params(day: str | None, clock: str | None) -> dict[str, str] | None:
+        """Optional `date`/`time` query for endpoints that support simulation."""
+        params = {
+            key: value for key, value in (("date", day), ("time", clock)) if value is not None
+        }
+        return params or None
+
+    async def get_user_status(
+        self, user_id: int, day: str | None = None, clock: str | None = None
+    ) -> dict[str, Any]:
+        """GET /users/{user_id}/status: status now, or at a simulated date and time."""
+        return await self._get(
+            f"/users/{user_id}/status", params=self._simulation_params(day, clock)
+        )
 
     async def get_schedule_month(self, user_id: int) -> dict[str, Any]:
         """GET /users/{user_id}/schedule/month: current month schedule."""
@@ -610,6 +635,10 @@ class PeriodicalApi:
         params = {"year": year} if year is not None else None
         return await self._get(f"/users/{user_id}/absences", params=params)
 
-    async def get_next_shift(self, user_id: int) -> dict[str, Any]:
-        """GET /users/{user_id}/next-shift: the next working day."""
-        return await self._get(f"/users/{user_id}/next-shift")
+    async def get_next_shift(
+        self, user_id: int, day: str | None = None, clock: str | None = None
+    ) -> dict[str, Any]:
+        """GET /users/{user_id}/next-shift: next working day, optionally simulated."""
+        return await self._get(
+            f"/users/{user_id}/next-shift", params=self._simulation_params(day, clock)
+        )

@@ -35,7 +35,6 @@ from .const import (
     DATA_SHIFTS,
     DATA_STATUS,
     DATA_VACATION_BALANCE,
-    DEFAULT_BASE_URL,
     DOMAIN,
     SCAN_INTERVAL,
 )
@@ -110,7 +109,7 @@ class PeriodicalCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.entry = entry
         self.api = PeriodicalApi(
-            base_url=entry.data.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+            base_url=entry.data[CONF_BASE_URL],
             api_key=entry.data[CONF_API_KEY],
             session=async_get_clientsession(hass),
         )

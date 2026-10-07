@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import voluptuous as vol
 
@@ -17,7 +18,7 @@ from .const import (
     CONF_BASE_URL,
     CONF_USER_ID,
     CONF_USER_NAME,
-    DEFAULT_BASE_URL,
+    API_PATH,
     DOMAIN,
 )
 
@@ -26,9 +27,25 @@ _LOGGER = logging.getLogger(__name__)
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): str,
+        vol.Required(CONF_BASE_URL): str,
     }
 )
+
+
+def normalize_base_url(raw: str) -> str | None:
+    """Clean up a user-entered server address, or None if it is not usable.
+
+    A bare host such as `https://periodical.example.com` gets the API path
+    appended, since that is how Periodical serves its API.  A path the user
+    typed is kept as is, for servers mounted somewhere else.
+    """
+    url = raw.strip().rstrip("/")
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    if not parts.path:
+        url += API_PATH
+    return url
 
 STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_API_KEY): str})
 
@@ -88,9 +105,13 @@ class PeriodicalConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             api_key = user_input[CONF_API_KEY].strip()
-            base_url = user_input.get(CONF_BASE_URL, DEFAULT_BASE_URL).strip().rstrip("/")
+            base_url = normalize_base_url(user_input[CONF_BASE_URL])
 
-            user_id, user_name, error = await self._async_identify(api_key, base_url)
+            user_id, user_name, error = (
+                (None, "", "invalid_url")
+                if base_url is None
+                else await self._async_identify(api_key, base_url)
+            )
             if error is not None:
                 errors["base"] = error
             else:
@@ -108,7 +129,8 @@ class PeriodicalConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_SCHEMA,
+            # Keep what was typed when the form comes back with an error.
+            data_schema=self.add_suggested_values_to_schema(STEP_USER_SCHEMA, user_input),
             errors=errors,
         )
 
@@ -129,7 +151,7 @@ class PeriodicalConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             api_key = user_input[CONF_API_KEY].strip()
-            base_url = entry.data.get(CONF_BASE_URL, DEFAULT_BASE_URL)
+            base_url = entry.data[CONF_BASE_URL]
 
             user_id, user_name, error = await self._async_identify(api_key, base_url)
             if error is not None:

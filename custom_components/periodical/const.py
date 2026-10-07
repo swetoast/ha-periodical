@@ -12,7 +12,9 @@ CONF_BASE_URL: Final = "base_url"
 CONF_USER_ID: Final = "user_id"
 CONF_USER_NAME: Final = "user_name"
 
-DEFAULT_BASE_URL: Final = "https://periodical.kakanweb.com/api/v1"
+# Periodical is self-hosted, so there is deliberately no default server: a
+# default host would send every new user's API key to whoever runs it.
+API_PATH: Final = "/api/v1"
 SCAN_INTERVAL: Final = timedelta(minutes=15)
 
 # GET /users/{id}/schedule?from_date=&to_date= rejects spans wider than this.

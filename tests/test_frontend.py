@@ -50,3 +50,49 @@ async def test_updates_existing_and_removes_duplicates() -> None:
 
     resources.async_update_item.assert_awaited_once()
     resources.async_delete_item.assert_awaited_once_with("2")
+
+
+@pytest.mark.asyncio
+async def test_supports_dict_lovelace_data() -> None:
+    """Home Assistant before 2025.2 stores Lovelace data as a plain dict."""
+    resources = Mock()
+    resources.loaded = True
+    resources.async_items.return_value = []
+    resources.async_create_item = AsyncMock()
+    hass = SimpleNamespace(
+        data={"lovelace": {"resources": resources}},
+        http=SimpleNamespace(async_register_static_paths=AsyncMock()),
+    )
+
+    await PeriodicalFrontendRegistration(hass).async_register()
+
+    resources.async_create_item.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_static_path_registered_once_across_reloads() -> None:
+    from custom_components.periodical import FRONTEND_KEY, _async_register_frontend
+
+    register = AsyncMock()
+    hass = SimpleNamespace(
+        data={},
+        http=SimpleNamespace(async_register_static_paths=register),
+    )
+
+    await _async_register_frontend(hass)
+    await _async_register_frontend(hass)
+
+    assert FRONTEND_KEY in hass.data
+    register.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_registration_failure_does_not_block_setup() -> None:
+    from custom_components.periodical import _async_register_frontend
+
+    hass = SimpleNamespace(
+        data={},
+        http=SimpleNamespace(async_register_static_paths=AsyncMock(side_effect=RuntimeError)),
+    )
+
+    await _async_register_frontend(hass)

@@ -15,11 +15,13 @@ Built for rotating shift work: it understands overnight shifts that run past mid
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Entities](#entities)
+- [Lovelace card](#lovelace-card)
 - [How schedule data is interpreted](#how-schedule-data-is-interpreted)
 - [Update strategy](#update-strategy)
 - [Services](#services)
 - [Automation examples](#automation-examples)
 - [Troubleshooting](#troubleshooting)
+- [Development](#development)
 - [Repository layout](#repository-layout)
 - [Credits and license](#credits-and-license)
 
@@ -34,7 +36,8 @@ Built for rotating shift work: it understands overnight shifts that run past mid
 * Tiered polling that matches how fast each endpoint actually changes, with forced refresh at day, month and year boundaries
 * Five services for ad hoc lookups, returning data both as a response variable and as an event
 * Multi account capable: add a second Periodical user as a second config entry
-* English translations included, ready for further localisation
+* Bundled Lovelace card, registered automatically, no separate download
+* English and Swedish translations
 
 ## Requirements
 
@@ -64,7 +67,7 @@ Or do it by hand:
 
 ### Manual
 
-1. Download the latest release archive from the [releases page][release-url]
+1. Download the repository from [GitHub](https://github.com/swetoast/ha-periodical)
 2. Copy the `periodical` folder into `config/custom_components/` on your Home Assistant instance
 3. Restart Home Assistant
 
@@ -85,8 +88,12 @@ config/custom_components/periodical/
 ├── services.py
 ├── services.yaml
 ├── strings.json
+├── frontend/
+│   ├── __init__.py
+│   └── periodical-card.js
 └── translations/
-    └── en.json
+    ├── en.json
+    └── sv.json
 ```
 
 ## Configuration
@@ -95,12 +102,14 @@ config/custom_components/periodical/
 
 Or navigate to **Settings** > **Devices & services** > **Add integration** and search for **Periodical**.
 
-| Field | Required | Default | Notes |
-|---|---|---|---|
-| API Key | Yes | | Your personal bearer token from the Periodical web portal, under Settings > API |
-| API Base URL | No | `https://periodical.com/api/v1` | Change only if you self host Periodical |
+| Field | Required | Notes |
+|---|---|---|
+| Server address | Yes | The Periodical server you use, for example `https://periodical.example.com`. The `/api/v1` path is added for you if you leave it out |
+| API Key | Yes | Your personal bearer token from the Periodical web portal, under Settings > API |
 
-The key is validated immediately by calling `/me`. The numeric user id from that response identifies the account, so the entry survives a base URL change without duplicating itself.
+There is no default server. Periodical is self hosted, and a built in address would send every new user's API key to whoever runs it.
+
+The key is validated immediately by calling `/me`. The numeric user id from that response identifies the account, so the entry survives a server address change without duplicating itself.
 
 ### Re-authentication
 
@@ -133,7 +142,7 @@ All entities live under a single device named after the Periodical account.
 | `sensor.periodical_shift_start_today` | timestamp | Start of the shift currently in effect, blank on absence and days off |
 | `sensor.periodical_shift_end_today` | timestamp | End of that shift, rolled past midnight when it runs overnight |
 | `sensor.periodical_status_today` | | `working`, `off`, `vacation`, `sick`, `vab`, `leave`, `parental` or `unknown` |
-| `sensor.periodical_coworkers_today` | people | Colleagues working alongside you right now, with the roster in attributes. During a carried over night shift this is that shift's crew |
+| `sensor.periodical_coworkers_today` | people | Everyone on the day's roster. The `same_shift` attribute narrows it to the people on your own shift. During a carried over night shift the roster is the one from the day that shift started |
 | `sensor.periodical_ob_today` | SEK | Inconvenient hours supplement earned today |
 | `sensor.periodical_rotation_week` | | Position in the rotation cycle |
 
@@ -144,7 +153,7 @@ All entities live under a single device named after the Periodical account.
 | `sensor.periodical_tomorrow_shift_date` | date | Tomorrow's date, blank unless tomorrow is actually worked |
 | `sensor.periodical_tomorrow_shift_start` | | Tomorrow's start time as `HH:MM` |
 | `sensor.periodical_tomorrow_shift_end` | | Tomorrow's end time as `HH:MM` |
-| `sensor.periodical_next_shift_date` | date | Next working day, skipping days off and booked absence |
+| `sensor.periodical_next_shift_date` | date | Next working day, skipping days off and booked absence. This can be an on-call day; check the `on_call` attribute |
 | `sensor.periodical_next_shift_start` | | Its start time as `HH:MM` |
 | `sensor.periodical_next_shift_end` | | Its end time as `HH:MM` |
 
@@ -193,6 +202,36 @@ All entities live under a single device named after the Periodical account.
 | `sensor.periodical_absences_count` | absences | Entries registered on `/absences` this year |
 | `sensor.periodical_account` | | Display name from `/me`, with role and account flags in attributes |
 
+## Lovelace card
+
+The integration ships its own dashboard card. On startup it is served from `/periodical-static/periodical-card.js` and added to your Lovelace resources, so there is nothing to download or register by hand. The resource URL carries the integration version, so browsers pick up a new card after every update.
+
+Add it to a dashboard with:
+
+```yaml
+type: custom:periodical-card
+```
+
+It finds your Periodical entities on its own and shows today's shift with a progress bar and time remaining, who you are working with grouped by shift, tomorrow and the next shift, and this week, month and year at a glance, along with pay, OB, vacation and absences. On-call days show as "On call" rather than as a working day or a day off.
+
+| Option | Description |
+|---|---|
+| `name` | Title shown on the card. Defaults to the Periodical user name |
+| `user_prefix` | Only needed with more than one Periodical account, for example `periodical_14` |
+
+Both options are also available in the visual editor.
+
+If your dashboards are in YAML mode, Home Assistant cannot add resources for you. Add this under `lovelace:` in `configuration.yaml` instead:
+
+```yaml
+lovelace:
+  resources:
+    - url: /periodical-static/periodical-card.js
+      type: module
+```
+
+If you installed an earlier copy of the card under `/local/`, remove that resource. Both copies can load side by side without errors, but only one of them will be used.
+
 ## How schedule data is interpreted
 
 The Periodical API returns raw rota data. A few rules turn that into something you can safely automate against.
@@ -214,7 +253,7 @@ A night shift starting at 22:00 belongs to the day it began on. At 02:00 the fol
 
 * `shift_start_today` reports 22:00 yesterday and `shift_end_today` reports 06:30 today
 * `working_today` is on, even if today itself is a day off
-* `coworkers_today` lists the people on that night shift, not today's day roster
+* `coworkers_today` uses the roster from the day the shift started, and `same_shift` names who is on nights with you
 * `absent_today` stays off on the first morning of a holiday until the shift ends
 
 The API reports a running overnight shift in `currently_active_shift` on `/status`, and that field takes precedence over the day's own fields. If it is missing, the integration falls back to yesterday's entry in the schedule window. Either way, the shift is only treated as active while its end time is still in the future, and the `carried_over` and `shift_date` attributes show which day it is anchored to.
@@ -407,7 +446,7 @@ The key was rejected by `/me`. Confirm it is current in the Periodical portal an
 
 ### Setup fails with "cannot connect"
 
-Home Assistant could not reach the host. Check the base URL and that your instance can resolve and reach it. Self hosted deployments usually need the full path including `/api/v1`.
+Home Assistant could not reach the server. Check the address and that your Home Assistant instance can resolve and reach it. If your server serves the API somewhere other than `/api/v1`, enter the full path.
 
 ### Everything is unavailable after working fine
 
@@ -429,6 +468,17 @@ That is intended. On-call is stand-by, so it has its own `binary_sensor.periodic
 
 An older install left rows in the entity registry. Remove the stale entities from **Settings** > **Devices & services** > **Entities**, then reload the integration.
 
+## Development
+
+The tests run against a real Home Assistant through `pytest-homeassistant-custom-component`:
+
+```bash
+pip install -r requirements_test.txt
+pytest
+```
+
+They cover the config flow, setting up and unloading the whole integration, the API client contract, the schedule rules (absence, overnight shifts, on-call, overtime), card registration, and that the Swedish translation has every key the English one has.
+
 ## Repository layout
 
 ```text
@@ -443,7 +493,9 @@ An older install left rows in the entity registry. Remove the stale entities fro
 │       ├── binary_sensor.py  Binary sensor definitions
 │       ├── config_flow.py    Setup and re-authentication
 │       ├── services.py       Service handlers
-│       └── translations/
+│       ├── frontend/         Bundled Lovelace card and its registration
+│       └── translations/     English and Swedish
+├── tests/
 ├── hacs.json
 └── README.md
 ```

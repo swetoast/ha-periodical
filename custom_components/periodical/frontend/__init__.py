@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
@@ -20,10 +21,25 @@ with MANIFEST_PATH.open(encoding="utf-8") as manifest_file:
     INTEGRATION_VERSION = str(json.load(manifest_file).get("version", "0.0.0"))
 
 
+def _lovelace_resources(hass: HomeAssistant) -> Any:
+    """The Lovelace resource collection, or None in YAML mode.
+
+    Home Assistant 2025.2 turned hass.data["lovelace"] from a dict into a
+    dataclass; the manifest still supports 2024.11, so both shapes are read.
+    """
+    lovelace = hass.data.get("lovelace")
+    if lovelace is None:
+        return None
+    if isinstance(lovelace, dict):
+        return lovelace.get("resources")
+    return getattr(lovelace, "resources", None)
+
+
 class PeriodicalFrontendRegistration:
     """Manage the process-global frontend module registration."""
 
     def __init__(self, hass: HomeAssistant) -> None:
+        """Track whether the static path is already served in this process."""
         self.hass = hass
         self._static_path_registered = False
 
@@ -43,8 +59,7 @@ class PeriodicalFrontendRegistration:
 
     async def _async_register_lovelace_resource(self) -> None:
         """Create or update the resource without risking stored resources."""
-        lovelace = self.hass.data.get("lovelace")
-        resources = getattr(lovelace, "resources", None) if lovelace is not None else None
+        resources = _lovelace_resources(self.hass)
         if resources is None:
             _LOGGER.info(
                 "Periodical card is available at %s?v=%s; add it as a module "
