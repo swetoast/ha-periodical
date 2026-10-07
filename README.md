@@ -1,9 +1,7 @@
 # Periodical for Home Assistant
 
 [![HACS Custom][hacs-shield]][hacs-url]
-[![GitHub Release][release-shield]][release-url]
 [![License][license-shield]][license-url]
-[![Downloads][downloads-shield]][release-url]
 [![Home Assistant][ha-shield]][ha-url]
 
 Brings your Periodical shift rota into Home Assistant. Exposes today's shift, upcoming shifts, working status, absence, vacation balance and monthly pay as native entities you can automate against.
@@ -461,10 +459,7 @@ Released under the MIT License. See [LICENSE](LICENSE).
 <!-- Badge references -->
 [hacs-shield]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
 [hacs-url]: https://github.com/hacs/integration
-[release-shield]: https://img.shields.io/github/v/release/swetoast/ha-periodical?style=for-the-badge
-[release-url]: https://github.com/swetoast/ha-periodical/releases
 [license-shield]: https://img.shields.io/github/license/swetoast/ha-periodical?style=for-the-badge
 [license-url]: https://github.com/swetoast/ha-periodical/blob/main/LICENSE
-[downloads-shield]: https://img.shields.io/github/downloads/swetoast/ha-periodical/total?style=for-the-badge
 [ha-shield]: https://img.shields.io/badge/Home%20Assistant-2024.11%2B-41BDF5.svg?style=for-the-badge
 [ha-url]: https://www.home-assistant.io
