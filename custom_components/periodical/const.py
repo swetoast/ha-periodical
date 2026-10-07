@@ -1,19 +1,18 @@
 """Constants for the Periodical integration."""
+
 from __future__ import annotations
 
 from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "periodical"
-DATA_FRONTEND: Final = "frontend"
-DATA_FRONTEND_LOCK: Final = "frontend_lock"
 
 CONF_API_KEY: Final = "api_key"
 CONF_BASE_URL: Final = "base_url"
 CONF_USER_ID: Final = "user_id"
 CONF_USER_NAME: Final = "user_name"
 
-DEFAULT_BASE_URL: Final = "https://periodical.com/api/v1"
+DEFAULT_BASE_URL: Final = "https://periodical.kakanweb.com/api/v1"
 SCAN_INTERVAL: Final = timedelta(minutes=15)
 
 # GET /users/{id}/schedule?from_date=&to_date= rejects spans wider than this.
@@ -41,15 +40,27 @@ DATA_API_HEALTH: Final = "api_health"
 STATUS_WORKING: Final = "working"
 STATUS_OFF: Final = "off"
 STATUS_UNKNOWN: Final = "unknown"
+STATUS_VACATION: Final = "vacation"
+STATUS_SICK: Final = "sick"
+STATUS_VAB: Final = "vab"
+STATUS_LEAVE: Final = "leave"
+STATUS_PARENTAL: Final = "parental"
 
 # Statuses that mean "scheduled, but not actually working".  The API still
 # returns the rotation shift on these days (e.g. a vacation day keeps its N2
 # 14:00-22:30 block), so every "today"/"tomorrow" shift sensor must consult the
 # status before reporting shift times, or the integration shows a working day
 # to somebody who is on holiday.
-ABSENCE_STATUSES: Final = frozenset({"vacation", "sick", "vab", "leave", "parental"})
+ABSENCE_STATUSES: Final = frozenset(
+    {STATUS_VACATION, STATUS_SICK, STATUS_VAB, STATUS_LEAVE, STATUS_PARENTAL}
+)
 
 # Shift codes that are stand-by rather than worked hours.  On-call spans
 # 00:00-00:00 with overnight=true, i.e. a full 24 h, and must not be added to
-# worked-hour totals — payroll reports it separately as oncall_hours.
+# worked-hour totals; payroll reports it separately as oncall_hours.
 ONCALL_SHIFT_CODES: Final = frozenset({"OC"})
+
+# The fixed set of OB (inconvenient-hours) supplement codes payroll uses.
+# /pay/month returns ob_pay, ob_hours, sick_ob_pay_by_code and
+# sick_ob_hours_by_code as dicts keyed by these.
+OB_CODES: Final = ("OB1", "OB2", "OB3", "OB4", "OB5")
