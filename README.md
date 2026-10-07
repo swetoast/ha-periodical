@@ -98,7 +98,7 @@ Or navigate to **Settings** > **Devices & services** > **Add integration** and s
 | Field | Required | Default | Notes |
 |---|---|---|---|
 | API Key | Yes | | Your personal bearer token from the Periodical web portal, under Settings > API |
-| API Base URL | No | `https://periodical.kakanweb.com/api/v1` | Change only if you self host Periodical |
+| API Base URL | No | `https://periodical.com/api/v1` | Change only if you self host Periodical |
 
 The key is validated immediately by calling `/me`. The numeric user id from that response identifies the account, so the entry survives a base URL change without duplicating itself.
 
